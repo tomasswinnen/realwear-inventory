@@ -318,7 +318,7 @@ export function ItemForecast() {
       {sku && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {kpis.map(k => (
-            <MetricCard key={k.label} loading={loading && !computed} {...k} />
+            <MetricCard key={k.label} loading={loading || !computed} {...k} />
           ))}
         </div>
       )}
@@ -335,14 +335,14 @@ export function ItemForecast() {
               title="Historic Sales Per Month"
               subtitle={`Last ${HISTORY_MONTHS} months · highest bar highlighted`}
               height={220}
-              loading={loading && !computed}
+              loading={loading || !computed}
             >
-              {computed?.histChart.length === 0 ? (
+              {(computed?.histChart?.length ?? 0) === 0 ? (
                 <p className="text-slate-600 font-mono text-xs text-center py-16">No sales data</p>
               ) : (
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart
-                    data={computed.histChart}
+                    data={computed?.histChart ?? []}
                     margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
                     barCategoryGap="28%"
                   >
@@ -358,10 +358,10 @@ export function ItemForecast() {
                     />
                     <Tooltip content={<HistoricTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
                     <Bar dataKey="qty" radius={[3, 3, 0, 0]}>
-                      {computed.histChart.map((d, i) => (
+                      {(computed?.histChart ?? []).map((d, i) => (
                         <Cell
                           key={i}
-                          fill={d.isMax ? '#0ea5e9' : '#0ea5e9'}
+                          fill="#0ea5e9"
                           fillOpacity={d.isMax ? 1 : 0.28}
                         />
                       ))}
@@ -376,7 +376,7 @@ export function ItemForecast() {
               title="12-Month On-Hand Forecast — EOM"
               subtitle="3m avg model (blue)  ·  6m avg model (amber)  ·  red zone = stockout"
               height={240}
-              loading={loading && !computed}
+              loading={loading || !computed}
             >
               <ResponsiveContainer width="100%" height={240}>
                 <LineChart
