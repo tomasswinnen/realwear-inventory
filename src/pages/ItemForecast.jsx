@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { SearchableSelect } from '../components/SearchableSelect';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
@@ -264,19 +265,15 @@ export function ItemForecast() {
         {/* SKU picker */}
         <div className="flex flex-col gap-1.5">
           <label className="text-[10px] font-sans font-medium text-slate-500 uppercase tracking-widest">
-            Part Number
+            SKU
           </label>
-          <select
+          <SearchableSelect
             value={sku ?? ''}
-            onChange={e => { if (e.target.value) navigate(`/item/${e.target.value}`); }}
-            className="rounded-lg px-3 py-2.5 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-accent/40 cursor-pointer min-w-[150px]"
-            style={{ background: '#0d1a27', border: '1px solid rgba(148,163,184,0.15)' }}
-          >
-            {!sku && <option value="">Select…</option>}
-            {allSkus?.map(s => (
-              <option key={s.sku} value={s.sku}>{s.sku}</option>
-            ))}
-          </select>
+            onChange={v => { if (v) navigate(`/item/${v}`); }}
+            options={(allSkus ?? []).map(s => ({ value: s.sku, label: s.sku }))}
+            placeholder="Select SKU…"
+            className="min-w-[160px]"
+          />
         </div>
 
         {/* Display name */}

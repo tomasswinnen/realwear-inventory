@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { supabase } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { StatusBadge } from '../components/StatusBadge';
@@ -57,14 +58,15 @@ export function POHistory() {
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
-        <select
+        <SearchableSelect
           value={skuFilter}
-          onChange={e => setSkuFilter(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-accent/50"
-        >
-          <option value="">All SKUs</option>
-          {skuOptions.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+          onChange={setSkuFilter}
+          options={skuOptions.map(s => ({ value: s, label: s }))}
+          placeholder="All SKUs"
+          clearable
+          clearLabel="All SKUs"
+          className="w-44"
+        />
 
         <div className="flex border border-white/[0.12] rounded overflow-hidden text-xs font-mono">
           <button
