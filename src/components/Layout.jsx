@@ -2,10 +2,11 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 
 const NAV = [
-  { to: '/',            label: 'Dashboard',     icon: '⬛' },
+  { to: '/',            label: 'Dashboard',      icon: '⬛' },
   { to: '/forecast',    label: 'Demand Forecast', icon: '📈' },
-  { to: '/locations',   label: 'By Location',   icon: '📍' },
-  { to: '/po-history',  label: 'PO History',    icon: '📋' },
+  { to: '/locations',   label: 'By Location',    icon: '📍' },
+  { to: '/item',        label: 'Item Forecast',  icon: '🔍' },
+  { to: '/po-history',  label: 'PO History',     icon: '📋' },
   { to: '/reorder',     label: 'Reorder Alerts', icon: '🔴' },
 ];
 

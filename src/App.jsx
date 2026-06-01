@@ -34,6 +34,7 @@ export default function App() {
             <Route index element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
             <Route path="forecast" element={<Suspense fallback={<PageFallback />}><Forecast /></Suspense>} />
             <Route path="locations" element={<Suspense fallback={<PageFallback />}><Locations /></Suspense>} />
+            <Route path="item" element={<Suspense fallback={<PageFallback />}><ItemForecast /></Suspense>} />
             <Route path="item/:sku" element={<Suspense fallback={<PageFallback />}><ItemForecast /></Suspense>} />
             <Route path="po-history" element={<Suspense fallback={<PageFallback />}><POHistory /></Suspense>} />
             <Route path="reorder" element={<Suspense fallback={<PageFallback />}><ReorderAlerts /></Suspense>} />

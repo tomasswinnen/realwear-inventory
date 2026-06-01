@@ -1,35 +1,70 @@
-import { useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
-  BarChart, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell,
 } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
-import { KPICard } from '../components/KPICard';
-import { StatusBadge } from '../components/StatusBadge';
+import { formatCurrency, coverageColor } from '../utils/coverage';
 import { QueryError } from '../components/QueryError';
-import { KPISkeleton, ChartSkeleton, TableSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, formatCurrency, avgLast } from '../utils/coverage';
+import { Skeleton, ChartSkeleton } from '../components/Skeleton';
 
-async function fetchItemData(sku) {
-  const [skuRes, snapRes, salesRes, poRes] = await Promise.all([
-    supabase.from('skus').select('*').eq('sku', sku).single(),
-    supabase.from('inventory_snapshot').select('*').eq('sku', sku).order('updated_at', { ascending: false }).limit(1).single(),
-    supabase.from('monthly_sales').select('*').eq('sku', sku).order('month', { ascending: true }),
-    supabase.from('po_history').select('*').eq('sku', sku).order('created_at', { ascending: false }),
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const HISTORY_MONTHS = 8;
+const FORECAST_MONTHS = 12;
+const GROWTH_DEFAULT = 2.5;
+
+function fmtMo(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return `${MONTHS_SHORT[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+}
+
+function addMonths(d, n) {
+  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+
+function avg(arr) {
+  if (!arr.length) return 0;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function coverageClass(inv, monthlyDemand) {
+  if (!monthlyDemand) return 'text-slate-300';
+  const mo = inv / monthlyDemand;
+  if (mo < 1) return 'text-danger';
+  if (mo < 3) return 'text-warning';
+  return 'text-success';
+}
+
+async function fetchAllSkus() {
+  const { data, error } = await supabase.from('skus').select('sku, description').order('sku');
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+async function fetchItem(sku) {
+  const [skuRes, snapRes, salesRes, valRes] = await Promise.all([
+    supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
+    supabase.from('inventory_snapshot').select('*').eq('sku', sku)
+      .order('updated_at', { ascending: false }).limit(1),
+    supabase.from('monthly_sales').select('month, qty_sold').eq('sku', sku)
+      .order('month', { ascending: true }),
+    supabase.from('inventory_valuation').select('on_hand, inv_value').eq('sku', sku)
+      .order('updated_at', { ascending: false }).limit(1),
   ]);
-  if (skuRes.error) throw new Error(`SKU not found: ${sku}`);
+  for (const r of [skuRes, snapRes, salesRes, valRes]) {
+    if (r.error) throw new Error(r.error.message);
+  }
   return {
-    sku: skuRes.data,
-    snapshot: snapRes.data ?? {},
+    info: skuRes.data ?? {},
+    snap: snapRes.data?.[0] ?? {},
     sales: salesRes.data ?? [],
-    pos: poRes.data ?? [],
+    val: valRes.data?.[0] ?? {},
   };
 }
 
-const TOOLTIP_STYLE = {
+const TT = {
   backgroundColor: '#162030',
   border: '1px solid rgba(148,163,184,0.12)',
   borderRadius: 6,
@@ -38,218 +73,355 @@ const TOOLTIP_STYLE = {
   color: '#e2e8f0',
 };
 
-function buildProjection(sales, snapshot, qtyOverrides, growthRate) {
-  if (!sales.length) return [];
-
-  const last3Avg = avgLast(sales.map(s => s.qty_sold), 3);
-  const last6Avg = avgLast(sales.map(s => s.qty_sold), 6);
-
-  const lastSale = sales[sales.length - 1];
-  const lastDate = lastSale ? new Date(lastSale.month) : new Date();
-
-  const onHand = snapshot.on_hand_total ?? 0;
-  const onOrder = snapshot.on_order ?? 0;
-  let inv3 = onHand + onOrder;
-  let inv6 = onHand + onOrder;
-
-  const months = [];
-  for (let i = 1; i <= 12; i++) {
-    const d = new Date(lastDate);
-    d.setMonth(d.getMonth() + i);
-    const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-    const growth = 1 + (growthRate / 100);
-    const demand3 = last3Avg * Math.pow(growth, i / 12);
-    const demand6 = last6Avg * Math.pow(growth, i / 12);
-    const received = qtyOverrides[i] ?? 0;
-    inv3 = Math.max(0, inv3 + received - demand3);
-    inv6 = Math.max(0, inv6 + received - demand6);
-    months.push({ label, demand3: Math.round(demand3), demand6: Math.round(demand6), inv3: Math.round(inv3), inv6: Math.round(inv6), received });
-  }
-  return months;
-}
-
 export function ItemForecast() {
   const { sku } = useParams();
-  const { data, loading, error, refetch } = useQuery(() => fetchItemData(sku), [sku]);
-  const [qtyOverrides, setQtyOverrides] = useState({});
-  const [growthRate, setGrowthRate] = useState(0);
+  const navigate = useNavigate();
+  const [qtyReceived, setQtyReceived] = useState({});
+  const [growthRate, setGrowthRate] = useState(GROWTH_DEFAULT);
 
-  const projection = useMemo(() => {
-    if (!data) return [];
-    return buildProjection(data.sales, data.snapshot, qtyOverrides, growthRate);
-  }, [data, qtyOverrides, growthRate]);
+  const { data: allSkus } = useQuery(fetchAllSkus, []);
+  const { data, loading, error, refetch } = useQuery(
+    () => (sku ? fetchItem(sku) : Promise.resolve(null)),
+    [sku]
+  );
 
-  const kpis = useMemo(() => {
+  // Auto-navigate to first SKU when landing on /item with no param
+  useEffect(() => {
+    if (!sku && allSkus?.length) {
+      navigate(`/item/${allSkus[0].sku}`, { replace: true });
+    }
+  }, [sku, allSkus, navigate]);
+
+  // Reset received inputs on SKU change
+  useEffect(() => { setQtyReceived({}); }, [sku]);
+
+  const computed = useMemo(() => {
     if (!data) return null;
-    const sales = data.sales.map(s => s.qty_sold);
-    const snap = data.snapshot;
-    const avg3 = avgLast(sales, 3);
-    const avg6 = avgLast(sales, 6);
-    const onHand = snap.on_hand_total ?? 0;
-    const onOrder = snap.on_order ?? 0;
-    const months = calcMonthsCoverage(onHand + onOrder, avg6);
-    const totalSold = sales.reduce((a, b) => a + b, 0);
-    return { avg3, avg6, onHand, onOrder, months, totalSold };
-  }, [data]);
+    const salesQty = data.sales.map(s => s.qty_sold);
+    const a3 = avg(salesQty.slice(-3));
+    const a6 = avg(salesQty.slice(-6));
+    const peak = salesQty.length ? Math.max(...salesQty) : 0;
 
-  function handleOverrideChange(monthIdx, value) {
-    const num = parseInt(value, 10);
-    setQtyOverrides(prev => ({ ...prev, [monthIdx]: isNaN(num) ? 0 : Math.max(0, num) }));
-  }
+    // Last 8 months for history, most-recent first
+    const histCols = data.sales.slice(-HISTORY_MONTHS).reverse().map(s => ({
+      label: fmtMo(s.month),
+      qty: s.qty_sold,
+    }));
+    // Same data oldest-first for chart
+    const histChart = data.sales.slice(-HISTORY_MONTHS).map(s => ({
+      month: fmtMo(s.month),
+      qty: s.qty_sold,
+    }));
+
+    const onHand = data.snap.on_hand_total ?? 0;
+    const invValue = data.val.inv_value ?? onHand * (data.info.unit_cost ?? 0);
+
+    // Projection
+    const lastDate = data.sales.length
+      ? new Date(data.sales[data.sales.length - 1].month + 'T00:00:00')
+      : new Date();
+    let inv3 = onHand;
+    let inv6 = onHand;
+    const g = growthRate / 100;
+    const projRows = [];
+    for (let i = 1; i <= FORECAST_MONTHS; i++) {
+      const md = addMonths(lastDate, i);
+      const label = `${MONTHS_SHORT[md.getMonth()]}-${String(md.getFullYear()).slice(2)}`;
+      const sold3 = a3 * Math.pow(1 + g, i);
+      const sold6 = a6 * Math.pow(1 + g, i);
+      const recv = qtyReceived[i] ?? 0;
+      inv3 = Math.max(0, inv3 + recv - sold3);
+      inv6 = Math.max(0, inv6 + recv - sold6);
+      projRows.push({ i, label, inv3: Math.round(inv3), inv6: Math.round(inv6), sold3: Math.round(sold3), sold6: Math.round(sold6), recv });
+    }
+
+    return { a3, a6, peak, histCols, histChart, onHand, invValue, projRows };
+  }, [data, qtyReceived, growthRate]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
-  const skuInfo = data?.sku ?? {};
-  const sales = data?.sales ?? [];
+  const info = data?.info ?? {};
+  const snap = data?.snap ?? {};
+  const onHand = snap.on_hand_total ?? 0;
+  const onOrder = snap.on_order ?? 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link to="/forecast" className="text-muted text-xs font-mono hover:text-accent transition-colors">← Forecast</Link>
+    <div className="space-y-4">
+
+      {/* ── Top row: SKU picker + info ── */}
+      <div className="bg-card rounded-lg border border-white/[0.08] p-4">
+        <div className="flex flex-wrap gap-6 items-end">
+
+          {/* Part Number dropdown */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] text-muted font-mono uppercase tracking-wider">Part Number</label>
+            <select
+              value={sku ?? ''}
+              onChange={e => { if (e.target.value) navigate(`/item/${e.target.value}`); }}
+              className="bg-bg border border-white/[0.15] rounded px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-accent/60 min-w-[140px] cursor-pointer"
+            >
+              {!sku && <option value="">Select…</option>}
+              {allSkus?.map(s => (
+                <option key={s.sku} value={s.sku}>{s.sku}</option>
+              ))}
+            </select>
           </div>
-          <h1 className="text-xl font-sans font-semibold text-white">{sku}</h1>
-          {!loading && <p className="text-sm text-muted font-sans mt-0.5">{skuInfo.description}</p>}
+
+          {/* Display Name */}
+          <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
+            <label className="text-[10px] text-muted font-mono uppercase tracking-wider">Display Name</label>
+            {loading
+              ? <Skeleton className="h-8 w-64 rounded" />
+              : <p className="text-white font-sans text-sm py-1.5">{info.description || '—'}</p>}
+          </div>
+
+          {/* On Hand */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] text-muted font-mono uppercase tracking-wider">Currently On Hand</label>
+            {loading
+              ? <Skeleton className="h-8 w-24 rounded" />
+              : <p className="text-accent font-num text-2xl">{sku ? onHand.toLocaleString() : '—'}</p>}
+          </div>
+
+          {/* On Order */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] text-muted font-mono uppercase tracking-wider">Currently On Order</label>
+            {loading
+              ? <Skeleton className="h-8 w-24 rounded" />
+              : <p className="text-slate-300 font-num text-2xl">{sku ? onOrder.toLocaleString() : '—'}</p>}
+          </div>
         </div>
-        {!loading && (
-          <div className="text-xs font-mono text-muted">
-            <span className="text-slate-400">{skuInfo.supplier}</span>
-            {skuInfo.lead_time_days && <span className="ml-3">Lead: {skuInfo.lead_time_days}d</span>}
-            {skuInfo.moq && <span className="ml-3">MOQ: {skuInfo.moq}</span>}
-          </div>
-        )}
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {loading ? Array.from({ length: 6 }).map((_, i) => <KPISkeleton key={i} />) : (
-          <>
-            <KPICard label="On Hand" value={kpis.onHand?.toLocaleString()} accent />
-            <KPICard label="On Order" value={kpis.onOrder?.toLocaleString()} color="text-slate-300" />
-            <KPICard label="3M Avg Sales" value={kpis.avg3?.toFixed(0)} color="text-slate-300" />
-            <KPICard label="6M Avg Sales" value={kpis.avg6?.toFixed(0)} color="text-slate-300" />
-            <KPICard label="Months Coverage" value={isFinite(kpis.months) ? kpis.months?.toFixed(1) : '∞'}
-              color={!isFinite(kpis.months) ? 'text-success' : kpis.months < 1 ? 'text-danger' : kpis.months < 3 ? 'text-warning' : 'text-success'}
-            />
-            <KPICard label="Unit Cost" value={formatCurrency(skuInfo.unit_cost)} color="text-slate-300" />
-          </>
-        )}
-      </div>
-
-      {/* Historical sales bar chart */}
-      {loading ? <ChartSkeleton height={200} /> : (
-        <div className="bg-card rounded-lg border border-white/[0.08] p-5">
-          <h2 className="text-sm font-sans font-semibold text-white mb-4">Historical Sales</h2>
-          {sales.length === 0 ? (
-            <p className="text-muted font-mono text-sm text-center py-8">No sales data</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={sales.map(s => ({ ...s, month: new Date(s.month).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }) }))}
-                margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.06)" />
-                <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                <Bar dataKey="qty_sold" name="Units Sold" fill="#0ea5e9" radius={[2, 2, 0, 0]} maxBarSize={32} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      )}
-
-      {/* Controls */}
-      <div className="bg-card rounded-lg border border-white/[0.08] p-5">
-        <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-          <h2 className="text-sm font-sans font-semibold text-white">12-Month Projection</h2>
-          <div className="flex items-center gap-3">
-            <label className="text-xs font-mono text-muted whitespace-nowrap">Growth rate</label>
-            <input
-              type="range" min={-30} max={50} value={growthRate}
-              onChange={e => setGrowthRate(Number(e.target.value))}
-              className="w-32 accent-accent"
-            />
-            <span className={`text-xs font-mono w-12 text-right ${growthRate > 0 ? 'text-success' : growthRate < 0 ? 'text-danger' : 'text-muted'}`}>
-              {growthRate > 0 ? '+' : ''}{growthRate}%
-            </span>
-          </div>
-        </div>
-
-        {loading ? <ChartSkeleton height={220} /> : (
-          <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={projection} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.06)" />
-              <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-              <Legend
-                wrapperStyle={{ fontSize: 11, fontFamily: 'DM Mono', color: '#64748b', paddingTop: 8 }}
-              />
-              <Bar dataKey="received" name="Received" fill="rgba(34,197,94,0.4)" radius={[2, 2, 0, 0]} maxBarSize={16} />
-              <Line type="monotone" dataKey="inv3" name="Inv (3M avg)" stroke="#0ea5e9" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="inv6" name="Inv (6M avg)" stroke="#f59e0b" strokeWidth={2} dot={false} strokeDasharray="4 2" />
-            </ComposedChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Editable qty received per month */}
-      {!loading && (
-        <div className="bg-card rounded-lg border border-white/[0.08] p-5">
-          <h2 className="text-sm font-sans font-semibold text-white mb-1">Qty Received per Month</h2>
-          <p className="text-xs text-muted font-mono mb-4">Edit to simulate incoming stock · updates projection in real time</p>
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-12 gap-2">
-            {projection.map((m, i) => (
-              <div key={i} className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono text-muted">{m.label}</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={qtyOverrides[i + 1] ?? ''}
-                  placeholder="0"
-                  onChange={e => handleOverrideChange(i + 1, e.target.value)}
-                  className="bg-bg border border-white/[0.12] rounded px-2 py-1.5 text-xs font-mono text-white text-right focus:outline-none focus:border-accent/50 w-full"
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* PO History for this SKU */}
-      {loading ? <TableSkeleton rows={3} cols={6} /> : (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
-          <div className="px-4 py-3 border-b border-white/[0.08]">
-            <h2 className="text-sm font-sans font-semibold text-white">PO History</h2>
-          </div>
-          <div className="overflow-x-auto">
+      {/* ── Stats header row ── */}
+      {sku && (
+        <div className="bg-card rounded-lg border border-white/[0.08] overflow-x-auto">
+          <div className="min-w-max">
+            {/* Section label */}
+            <div className="px-3 pt-2 pb-0">
+              <span className="text-[10px] font-mono text-muted uppercase tracking-wider">Unit Sales per Month</span>
+            </div>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['PO #', 'Vendor', 'Status', 'Qty', 'Unit Cost', 'Date'].map(h => (
-                    <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
+                  {(loading
+                    ? Array.from({ length: HISTORY_MONTHS }).map((_, i) => `M${i}`)
+                    : computed?.histCols.map(c => c.label) ?? []
+                  ).map(label => (
+                    <th key={label} className="px-3 py-2 text-muted font-mono font-normal text-center">{label}</th>
                   ))}
+                  <th className="px-3 py-2 text-muted font-mono font-normal text-center border-l border-white/[0.08]">Avg 3m</th>
+                  <th className="px-3 py-2 text-muted font-mono font-normal text-center">Avg 6m</th>
+                  <th className="px-3 py-2 text-muted font-mono font-normal text-center">Largest Single Sale</th>
+                  <th className="px-3 py-2 text-muted font-mono font-normal text-center">Attach Rate</th>
+                  <th className="px-3 py-2 text-muted font-mono font-normal text-center">Unit Cost</th>
+                  <th className="px-3 py-2 text-muted font-mono font-normal text-center">On Hand Value</th>
                 </tr>
               </thead>
               <tbody>
-                {data?.pos?.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-6 text-center text-muted font-mono">No POs</td></tr>
-                ) : data?.pos?.map(po => (
-                  <tr key={po.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number}</td>
-                    <td className="px-4 py-2.5 text-muted font-sans">{po.vendor}</td>
-                    <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
-                    <td className="px-4 py-2.5 font-mono text-white">{po.qty_ordered?.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 font-mono text-white">{formatCurrency(po.unit_cost)}</td>
-                    <td className="px-4 py-2.5 font-mono text-muted">{po.created_at ? new Date(po.created_at).toLocaleDateString() : '—'}</td>
-                  </tr>
-                ))}
+                <tr>
+                  {loading ? (
+                    <td colSpan={HISTORY_MONTHS + 6} className="px-4 py-3">
+                      <Skeleton className="h-4 w-full" />
+                    </td>
+                  ) : (
+                    <>
+                      {computed?.histCols.map(c => (
+                        <td key={c.label} className="px-3 py-2.5 text-white font-mono text-center">{c.qty}</td>
+                      ))}
+                      <td className="px-3 py-2.5 text-accent font-mono text-center font-medium border-l border-white/[0.08]">
+                        {computed?.a3.toFixed(1)}
+                      </td>
+                      <td className="px-3 py-2.5 text-accent font-mono text-center font-medium">
+                        {computed?.a6.toFixed(1)}
+                      </td>
+                      <td className="px-3 py-2.5 text-white font-mono text-center">
+                        {computed?.peak}
+                      </td>
+                      <td className="px-3 py-2.5 text-white font-mono text-center">
+                        {info.attach_rate != null ? `${(Number(info.attach_rate) * 100).toFixed(0)}%` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-white font-mono text-center">
+                        {formatCurrency(info.unit_cost)}
+                      </td>
+                      <td className="px-3 py-2.5 text-success font-mono text-center font-medium">
+                        {formatCurrency(computed?.invValue)}
+                      </td>
+                    </>
+                  )}
+                </tr>
               </tbody>
             </table>
           </div>
         </div>
       )}
+
+      {/* ── Charts (left) + Projection panel (right) ── */}
+      {sku && (
+        <div className="flex gap-4 items-start flex-col xl:flex-row">
+
+          {/* Left: charts */}
+          <div className="flex-1 min-w-0 space-y-4">
+
+            {/* Historic + Forecast 3m side by side */}
+            <div className="grid md:grid-cols-2 gap-4">
+
+              {/* Historic Sales */}
+              {loading ? <ChartSkeleton height={200} /> : (
+                <div className="bg-card rounded-lg border border-white/[0.08] p-4">
+                  <h3 className="text-xs font-sans font-semibold text-white mb-3">Historic Sales Per Month</h3>
+                  {!computed?.histChart.length ? (
+                    <p className="text-muted font-mono text-xs text-center py-12">No sales data</p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={computed.histChart} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.06)" />
+                        <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
+                        <Tooltip contentStyle={TT} cursor={{ fill: 'rgba(255,255,255,0.04)' }} formatter={v => [v, 'Qty Sold']} />
+                        <Bar dataKey="qty" fill="#0ea5e9" radius={[2, 2, 0, 0]} maxBarSize={40} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              )}
+
+              {/* Forecast On Hand 3m */}
+              {loading ? <ChartSkeleton height={200} /> : (
+                <div className="bg-card rounded-lg border border-white/[0.08] p-4">
+                  <h3 className="text-xs font-sans font-semibold text-white mb-3">Forecast On Hand (3m) EOM</h3>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={computed?.projRows ?? []} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.06)" />
+                      <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={TT} cursor={{ fill: 'rgba(255,255,255,0.04)' }} formatter={v => [v, 'On Hand EOM']} />
+                      <Bar dataKey="inv3" radius={[2, 2, 0, 0]} maxBarSize={40}>
+                        {computed?.projRows.map((p, i) => (
+                          <Cell key={i} fill={p.sold3 > 0 ? coverageColor(p.inv3 / p.sold3) : '#22c55e'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Forecast On Hand 6m — full width */}
+            {loading ? <ChartSkeleton height={200} /> : (
+              <div className="bg-card rounded-lg border border-white/[0.08] p-4">
+                <h3 className="text-xs font-sans font-semibold text-white mb-3">Forecast On Hand (6m) EOM</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={computed?.projRows ?? []} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.06)" />
+                    <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'DM Mono' }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={TT} cursor={{ fill: 'rgba(255,255,255,0.04)' }} formatter={v => [v, 'On Hand EOM']} />
+                    <Bar dataKey="inv6" radius={[2, 2, 0, 0]} maxBarSize={40}>
+                      {computed?.projRows.map((p, i) => (
+                        <Cell key={i} fill={p.sold6 > 0 ? coverageColor(p.inv6 / p.sold6) : '#22c55e'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Projection panel */}
+          <div className="xl:w-[440px] shrink-0">
+            <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+
+              {/* Growth rate control */}
+              <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-3">
+                <span className="text-[10px] font-mono text-muted uppercase tracking-wider">Forecast Growth %</span>
+                <div className="flex items-center gap-2 ml-auto">
+                  <input
+                    type="number"
+                    min={-20} max={50} step={0.5}
+                    value={growthRate}
+                    onChange={e => setGrowthRate(Number(e.target.value))}
+                    className="w-16 bg-bg border border-white/[0.12] rounded px-2 py-1 text-xs font-mono text-white text-right focus:outline-none focus:border-accent/50"
+                  />
+                  <span className="text-xs font-mono text-muted">% / mo</span>
+                </div>
+              </div>
+
+              {/* Projection table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/[0.06]">
+                      <th className="px-3 py-2.5 text-left text-muted font-mono font-normal">Month</th>
+                      <th className="px-3 py-2.5 text-right text-muted font-mono font-normal">On Hand (3m)</th>
+                      <th className="px-3 py-2.5 text-right text-muted font-mono font-normal">On Hand (6m)</th>
+                      <th className="px-3 py-2.5 text-right text-muted font-mono font-normal">Qty Sold (3m)</th>
+                      <th className="px-3 py-2.5 text-right text-muted font-mono font-normal">Qty Sold (6m)</th>
+                      <th className="px-3 py-2.5 text-right text-muted font-mono font-normal">Qty Received</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading
+                      ? Array.from({ length: 12 }).map((_, i) => (
+                          <tr key={i} className="border-b border-white/[0.04]">
+                            {Array.from({ length: 6 }).map((_, j) => (
+                              <td key={j} className="px-3 py-2"><Skeleton className="h-3 w-full" /></td>
+                            ))}
+                          </tr>
+                        ))
+                      : computed?.projRows.map(row => (
+                          <tr key={row.i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                            <td className="px-3 py-2 font-mono text-slate-400">{row.label}</td>
+                            <td className={`px-3 py-2 font-mono text-right font-medium ${coverageClass(row.inv3, row.sold3)}`}>
+                              {row.inv3.toLocaleString()}
+                            </td>
+                            <td className={`px-3 py-2 font-mono text-right font-medium ${coverageClass(row.inv6, row.sold6)}`}>
+                              {row.inv6.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-right text-muted">{row.sold3.toLocaleString()}</td>
+                            <td className="px-3 py-2 font-mono text-right text-muted">{row.sold6.toLocaleString()}</td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                min={0}
+                                value={qtyReceived[row.i] ?? ''}
+                                placeholder="0"
+                                onChange={e => {
+                                  const v = parseInt(e.target.value, 10);
+                                  setQtyReceived(prev => ({
+                                    ...prev,
+                                    [row.i]: isNaN(v) ? 0 : Math.max(0, v),
+                                  }));
+                                }}
+                                className="w-20 bg-bg border border-white/[0.12] rounded px-2 py-1 text-xs font-mono text-white text-right focus:outline-none focus:border-accent/50"
+                              />
+                            </td>
+                          </tr>
+                        ))
+                    }
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Legend */}
+              <div className="px-4 py-2.5 border-t border-white/[0.06] flex items-center gap-4 text-[10px] font-mono">
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-danger inline-block" /> &lt;1mo</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-warning inline-block" /> 1–3mo</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-success inline-block" /> 3mo+</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Empty state while loading SKU list with no sku param */}
+      {!sku && !allSkus?.length && (
+        <div className="flex items-center justify-center py-24">
+          <p className="text-muted font-mono text-sm">Loading SKUs…</p>
+        </div>
+      )}
+
     </div>
   );
 }
