@@ -10,6 +10,7 @@ const Locations = lazy(() => import('./pages/Locations').then(m => ({ default: m
 const ItemForecast = lazy(() => import('./pages/ItemForecast').then(m => ({ default: m.ItemForecast })));
 const POHistory = lazy(() => import('./pages/POHistory').then(m => ({ default: m.POHistory })));
 const ReorderAlerts = lazy(() => import('./pages/ReorderAlerts').then(m => ({ default: m.ReorderAlerts })));
+const OnOrder = lazy(() => import('./pages/OnOrder').then(m => ({ default: m.OnOrder })));
 
 function PageFallback() {
   return (
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="item/:sku" element={<Suspense fallback={<PageFallback />}><ItemForecast /></Suspense>} />
             <Route path="po-history" element={<Suspense fallback={<PageFallback />}><POHistory /></Suspense>} />
             <Route path="reorder" element={<Suspense fallback={<PageFallback />}><ReorderAlerts /></Suspense>} />
+            <Route path="on-order" element={<Suspense fallback={<PageFallback />}><OnOrder /></Suspense>} />
           </Route>
         </Routes>
       </ErrorBoundary>
