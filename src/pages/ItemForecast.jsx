@@ -323,6 +323,55 @@ export function ItemForecast() {
         </div>
       )}
 
+      {/* ── Monthly sales history strip ── */}
+      {sku && (
+        <div className="rounded-xl overflow-hidden" style={{ background: '#162030', border: '1px solid rgba(148,163,184,0.08)' }}>
+          <div className="px-5 py-3 border-b" style={{ borderColor: 'rgba(148,163,184,0.08)' }}>
+            <h3 className="text-xs font-sans font-semibold text-slate-400 uppercase tracking-widest">
+              Units Sold — Last {HISTORY_MONTHS} Months
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            {loading || !computed ? (
+              <div className="flex gap-px">
+                {Array.from({ length: HISTORY_MONTHS }).map((_, i) => (
+                  <div key={i} className="flex-1 min-w-[72px] px-3 py-3 space-y-2">
+                    <Skeleton className="h-3 rounded w-10 mx-auto" />
+                    <Skeleton className="h-6 rounded w-8 mx-auto" />
+                  </div>
+                ))}
+              </div>
+            ) : (computed.histChart.length === 0 ? (
+              <p className="text-slate-600 font-mono text-xs text-center py-4">No sales data</p>
+            ) : (
+              <div className="flex">
+                {/* newest-first order */}
+                {[...computed.histChart].reverse().map((d, i) => (
+                  <div
+                    key={d.month}
+                    className="flex-1 min-w-[72px] flex flex-col items-center py-3 px-2"
+                    style={{
+                      borderRight: i < computed.histChart.length - 1 ? '1px solid rgba(148,163,184,0.06)' : 'none',
+                      background: d.isMax ? 'rgba(14,165,233,0.07)' : 'transparent',
+                    }}
+                  >
+                    <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap mb-1.5">
+                      {d.month}
+                    </span>
+                    <span className={`text-base font-num font-semibold leading-none ${d.isMax ? 'text-accent' : 'text-white'}`}>
+                      {d.qty.toLocaleString()}
+                    </span>
+                    {d.isMax && (
+                      <span className="text-[9px] font-mono text-accent/60 mt-1">peak</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Main: charts + projection ── */}
       {sku && (
         <div className="flex gap-4 items-start flex-col xl:flex-row">

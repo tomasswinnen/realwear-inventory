@@ -54,12 +54,27 @@ create table if not exists po_history (
 create index if not exists idx_po_sku on po_history(sku);
 create index if not exists idx_po_status on po_history(status);
 
+create table if not exists open_pos (
+  id serial primary key,
+  sku text references skus(sku),
+  po_number text,
+  vendor text,
+  status text default 'Open',
+  qty_ordered int default 0,
+  unit_cost numeric,
+  expected_date date,
+  created_at date not null default current_date,
+  unique(sku, po_number)
+);
+create index if not exists idx_open_pos_sku on open_pos(sku);
+
 -- Enable Row Level Security (recommended)
 alter table skus enable row level security;
 alter table inventory_snapshot enable row level security;
 alter table monthly_sales enable row level security;
 alter table inventory_valuation enable row level security;
 alter table po_history enable row level security;
+alter table open_pos enable row level security;
 
 -- Allow anon read access (dashboard is read-only from browser)
 create policy "anon read skus" on skus for select using (true);
@@ -67,3 +82,4 @@ create policy "anon read inventory_snapshot" on inventory_snapshot for select us
 create policy "anon read monthly_sales" on monthly_sales for select using (true);
 create policy "anon read inventory_valuation" on inventory_valuation for select using (true);
 create policy "anon read po_history" on po_history for select using (true);
+create policy "anon read open_pos" on open_pos for select using (true);

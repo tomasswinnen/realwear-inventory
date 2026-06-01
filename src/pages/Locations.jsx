@@ -72,6 +72,7 @@ export function Locations() {
   const { data, loading, error, refetch } = useQuery(fetchLocationsData, []);
   const [search, setSearch] = useState('');
   const [locationFilter, setLocationFilter] = useState('all');
+  const [criticalOnly, setCriticalOnly] = useState(false);
 
   const { rows, totals } = useMemo(() => {
     if (!data) return { rows: [], totals: {} };
@@ -79,7 +80,8 @@ export function Locations() {
     const filtered = all.filter(r => {
       const matchSearch = !search || r.sku.toLowerCase().includes(search.toLowerCase()) || r.description?.toLowerCase().includes(search.toLowerCase());
       const matchLoc = locationFilter === 'all' || (locationFilter === 'portland' && r.portland > 0) || (locationFilter === 'hk' && r.hk > 0);
-      return matchSearch && matchLoc;
+      const matchCritical = !criticalOnly || (isFinite(r.monthsPortland) && r.monthsPortland < 3) || (isFinite(r.monthsHk) && r.monthsHk < 3);
+      return matchSearch && matchLoc && matchCritical;
     });
     const totals = {
       portland: all.reduce((s, r) => s + r.portland, 0),
@@ -87,7 +89,7 @@ export function Locations() {
       total: all.reduce((s, r) => s + r.total, 0),
     };
     return { rows: filtered, totals };
-  }, [data, search, locationFilter]);
+  }, [data, search, locationFilter, criticalOnly]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
@@ -129,6 +131,19 @@ export function Locations() {
             </button>
           ))}
         </div>
+        <button
+          onClick={() => setCriticalOnly(v => !v)}
+          className={`px-3 py-2 rounded border text-xs font-mono transition-colors ${
+            criticalOnly
+              ? 'bg-danger/10 border-danger/40 text-danger'
+              : 'border-white/[0.12] text-muted hover:text-white hover:bg-white/5'
+          }`}
+        >
+          Critical only (&lt;3 mo)
+        </button>
+        {!loading && criticalOnly && (
+          <span className="text-xs font-mono text-danger">{rows.length} critical SKUs</span>
+        )}
       </div>
 
       {loading ? <TableSkeleton rows={8} cols={7} /> : (
@@ -152,9 +167,13 @@ export function Locations() {
                     </td>
                     <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[150px] truncate" title={row.description}>{row.description}</td>
                     <td className="px-4 py-2.5 font-mono text-white">{row.portland.toLocaleString()}</td>
-                    <td className="px-4 py-2.5"><span className={`text-xs font-mono ${coverageBg(row.monthsPortland)} px-1.5 py-0.5 rounded`}>{isFinite(row.monthsPortland) ? `${row.monthsPortland.toFixed(1)}` : '∞'}</span></td>
+                    <td className="px-4 py-2.5">
+                      <CoverageCell months={row.monthsPortland} />
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-white">{row.hk.toLocaleString()}</td>
-                    <td className="px-4 py-2.5"><span className={`text-xs font-mono ${coverageBg(row.monthsHk)} px-1.5 py-0.5 rounded`}>{isFinite(row.monthsHk) ? `${row.monthsHk.toFixed(1)}` : '∞'}</span></td>
+                    <td className="px-4 py-2.5">
+                      <CoverageCell months={row.monthsHk} />
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-white">{row.total.toLocaleString()}</td>
                     <td className="px-4 py-2.5"><CoverageCell months={row.monthsTotal} /></td>
                     <td className="px-4 py-2.5"><LocationBar portland={row.portland} hk={row.hk} total={row.total} /></td>

@@ -36,13 +36,11 @@ async function fetchDashboardData() {
 }
 
 function buildCoverageMap(skus, snapshot, sales) {
-  // Use latest snapshot per SKU
   const latestSnapshot = {};
   for (const s of snapshot) {
     if (!latestSnapshot[s.sku]) latestSnapshot[s.sku] = s;
   }
 
-  // Avg monthly sales (last 6 months) per SKU
   const salesBySku = {};
   for (const s of sales) {
     if (!salesBySku[s.sku]) salesBySku[s.sku] = [];
@@ -52,11 +50,17 @@ function buildCoverageMap(skus, snapshot, sales) {
   return skus.map(sku => {
     const snap = latestSnapshot[sku.sku];
     const skuSales = salesBySku[sku.sku] ?? [];
+    const last3 = skuSales.slice(0, 3);
     const last6 = skuSales.slice(0, 6);
+    const avg3 = last3.length ? last3.reduce((a, b) => a + b, 0) / last3.length : 0;
     const avgSales = last6.length ? last6.reduce((a, b) => a + b, 0) / last6.length : 0;
     const onHand = snap?.on_hand_total ?? 0;
-    const months = calcMonthsCoverage(onHand, avgSales);
-    return { ...sku, onHand, avgSales, months };
+    const portland = snap?.on_hand_portland ?? 0;
+    const hk = snap?.on_hand_hk ?? 0;
+    const months = calcMonthsCoverage(onHand, avg3);
+    const monthsPortland = calcMonthsCoverage(portland, avg3);
+    const monthsHk = calcMonthsCoverage(hk, avg3);
+    return { ...sku, onHand, avgSales, avg3, months, monthsPortland, monthsHk };
   });
 }
 
@@ -93,6 +97,7 @@ export function Dashboard() {
 
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3);
+    const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3);
 
     const latestValBySku = {};
     for (const v of data.valuation) {
@@ -107,7 +112,7 @@ export function Dashboard() {
 
     return {
       kpis: { urgent: urgent.length, watchList: watchList.length, total: data.skus.length },
-      urgentItems: urgent.sort((a, b) => a.months - b.months),
+      urgentItems: needsReorder.sort((a, b) => a.months - b.months),
       chartData,
       totalValue,
     };
@@ -163,14 +168,14 @@ export function Dashboard() {
         ) : (
           <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
-              <h2 className="text-sm font-sans font-semibold text-white">Urgent Reorder</h2>
-              <span className="text-xs font-mono text-danger">{urgentItems?.length ?? 0} SKUs</span>
+              <h2 className="text-sm font-sans font-semibold text-white">Needs Reorder</h2>
+              <span className="text-xs font-mono text-danger">{urgentItems?.length ?? 0} SKUs &lt; 3 mo</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'On Hand', 'Coverage', 'Supplier'].map(h => (
+                    {['SKU', 'Description', 'On Hand', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
                       <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -178,7 +183,7 @@ export function Dashboard() {
                 <tbody>
                   {urgentItems?.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-6 text-center text-muted font-mono">No urgent items</td>
+                      <td colSpan={7} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
                     </tr>
                   ) : urgentItems?.map(item => (
                     <tr key={item.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
@@ -187,9 +192,11 @@ export function Dashboard() {
                           {item.sku}
                         </Link>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[140px] truncate">{item.description}</td>
+                      <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[130px] truncate">{item.description}</td>
                       <td className="px-4 py-2.5 font-mono text-white">{item.onHand.toLocaleString()}</td>
                       <td className="px-4 py-2.5"><CoverageCell months={item.months} /></td>
+                      <td className="px-4 py-2.5"><CoverageCell months={item.monthsPortland} /></td>
+                      <td className="px-4 py-2.5"><CoverageCell months={item.monthsHk} /></td>
                       <td className="px-4 py-2.5 text-muted font-sans">{item.supplier}</td>
                     </tr>
                   ))}
