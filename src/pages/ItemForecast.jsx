@@ -270,7 +270,7 @@ export function ItemForecast() {
           <SearchableSelect
             value={sku ?? ''}
             onChange={v => { if (v) navigate(`/item/${v}`); }}
-            options={(allSkus ?? []).map(s => ({ value: s.sku, label: s.sku }))}
+            options={(allSkus ?? []).map(s => ({ value: s.sku, label: s.sku, description: s.description ?? undefined }))}
             placeholder="Select SKU…"
             className="min-w-[160px]"
           />

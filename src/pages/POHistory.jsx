@@ -39,7 +39,8 @@ export function POHistory() {
       return matchSku && matchStatus && matchSearch;
     });
 
-    const skuOptions = [...new Set(rows.map(r => r.sku))].sort();
+    const skuOptions = [...new Set(rows.map(r => r.sku))].sort()
+      .map(s => ({ value: s, label: s, description: descBySku[s] ?? undefined }));
     return { rows: filtered, skuOptions };
   }, [data, skuFilter, statusFilter, search]);
 
@@ -61,7 +62,7 @@ export function POHistory() {
         <SearchableSelect
           value={skuFilter}
           onChange={setSkuFilter}
-          options={skuOptions.map(s => ({ value: s, label: s }))}
+          options={skuOptions}
           placeholder="All SKUs"
           clearable
           clearLabel="All SKUs"

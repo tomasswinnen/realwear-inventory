@@ -3,15 +3,9 @@ import { useState, useRef, useEffect, useId } from 'react';
 /**
  * Searchable combobox dropdown.
  *
- * Props:
- *   value        – currently selected value string (or '' for none)
- *   onChange     – fn(value: string) called on selection; '' means cleared
- *   options      – [{ value: string, label: string }]
- *   placeholder  – text shown when nothing is selected
- *   clearable    – show an "All" option at the top to clear selection
- *   clearLabel   – label for the clear option (default "All")
- *   className    – extra classes on the wrapper div
- *   inputClass   – extra classes on the input element
+ * Options shape: { value: string, label: string, description?: string }
+ * The search matches against both label and description.
+ * The dropdown shows label as primary text and description as a muted second line.
  */
 export function SearchableSelect({
   value,
@@ -28,9 +22,8 @@ export function SearchableSelect({
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
   const inputRef = useRef(null);
-  const listRef = useRef(null);
 
-  // Sync input display with selected value when dropdown is closed
+  // Sync display text with selected value when closed
   useEffect(() => {
     if (!open) {
       const selected = options.find(o => o.value === value);
@@ -40,20 +33,21 @@ export function SearchableSelect({
 
   // Close on outside click
   useEffect(() => {
-    function handleClick(e) {
+    function onMouseDown(e) {
       if (containerRef.current && !containerRef.current.contains(e.target)) {
         setOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
   }, []);
 
-  const filtered = query.trim() === ''
+  const q = query.trim().toLowerCase();
+  const filtered = q === ''
     ? options
     : options.filter(o =>
-        o.label.toLowerCase().includes(query.toLowerCase()) ||
-        o.value.toLowerCase().includes(query.toLowerCase())
+        o.label.toLowerCase().includes(q) ||
+        (o.description ?? '').toLowerCase().includes(q)
       );
 
   function handleSelect(optValue) {
@@ -102,16 +96,12 @@ export function SearchableSelect({
           placeholder={placeholder}
           className={`flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-white placeholder:text-slate-600 focus:outline-none min-w-0 ${inputClass}`}
         />
-        {/* Chevron */}
         <button
           tabIndex={-1}
           onMouseDown={e => {
             e.preventDefault();
-            if (open) {
-              setOpen(false);
-            } else {
-              inputRef.current?.focus();
-            }
+            if (open) setOpen(false);
+            else inputRef.current?.focus();
           }}
           className="px-2 py-2.5 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
           aria-label="Toggle dropdown"
@@ -127,13 +117,12 @@ export function SearchableSelect({
 
       {open && (
         <div
-          ref={listRef}
-          className="absolute left-0 right-0 top-full mt-1 z-50 rounded-lg overflow-hidden overflow-y-auto"
+          className="absolute left-0 right-0 top-full mt-1 z-50 rounded-lg overflow-y-auto"
           style={{
             background: '#0d1a27',
             border: '1px solid rgba(148,163,184,0.18)',
-            maxHeight: 260,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            maxHeight: 280,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
           }}
         >
           {clearable && (
@@ -150,19 +139,24 @@ export function SearchableSelect({
           )}
 
           {filtered.length === 0 ? (
-            <div className="px-3 py-2 text-xs font-mono text-slate-600">No matches</div>
+            <div className="px-3 py-2.5 text-xs font-mono text-slate-600">No matches</div>
           ) : (
             filtered.map(opt => (
               <button
                 key={opt.value}
-                className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors ${
-                  opt.value === value
-                    ? 'text-accent bg-accent/10'
-                    : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'
+                className={`w-full text-left px-3 py-2 transition-colors ${
+                  opt.value === value ? 'bg-accent/10' : 'hover:bg-white/[0.05]'
                 }`}
                 onMouseDown={e => { e.preventDefault(); handleSelect(opt.value); }}
               >
-                {opt.label}
+                <span className={`block text-sm font-mono leading-snug ${opt.value === value ? 'text-accent' : 'text-slate-200'}`}>
+                  {opt.label}
+                </span>
+                {opt.description && (
+                  <span className="block text-[11px] font-sans text-slate-500 leading-snug mt-0.5 truncate">
+                    {opt.description}
+                  </span>
+                )}
               </button>
             ))
           )}
