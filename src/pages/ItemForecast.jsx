@@ -166,7 +166,11 @@ export function ItemForecast() {
     const peak = salesQty.length ? Math.max(...salesQty) : 0;
 
     const onHand = data.snap.on_hand_total ?? 0;
+    const portland = data.snap.on_hand_portland ?? 0;
+    const hk = data.snap.on_hand_hk ?? 0;
     const coverage = a6 > 0 ? onHand / a6 : Infinity;
+    const coveragePortland = a6 > 0 ? portland / a6 : Infinity;
+    const coverageHk = a6 > 0 ? hk / a6 : Infinity;
     const invValue = data.val.inv_value ?? onHand * (data.info.unit_cost ?? 0);
 
     // Historic chart — last 8 months oldest→newest
@@ -199,7 +203,7 @@ export function ItemForecast() {
 
     const projMin = Math.min(0, ...projRows.flatMap(r => [r.inv3, r.inv6]));
 
-    return { a3, a6, peak, coverage, invValue, histChart, histMax, projRows, projMin };
+    return { a3, a6, peak, coverage, coveragePortland, coverageHk, portland, hk, invValue, histChart, histMax, projRows, projMin };
   }, [data, qtyReceived, growthRate]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
@@ -215,6 +219,22 @@ export function ItemForecast() {
       label: 'On Hand',
       value: sku && !loading ? onHand.toLocaleString() : null,
       valueClass: 'text-accent',
+    },
+    {
+      label: 'Portland (PDX)',
+      value: computed ? computed.portland.toLocaleString() : null,
+      valueClass: computed ? itemCoverageClass(computed.coveragePortland) : 'text-white',
+      sub: computed
+        ? (isFinite(computed.coveragePortland) ? `${computed.coveragePortland.toFixed(1)} months` : '∞ months')
+        : null,
+    },
+    {
+      label: 'Hong Kong (HK)',
+      value: computed ? computed.hk.toLocaleString() : null,
+      valueClass: computed ? itemCoverageClass(computed.coverageHk) : 'text-white',
+      sub: computed
+        ? (isFinite(computed.coverageHk) ? `${computed.coverageHk.toFixed(1)} months` : '∞ months')
+        : null,
     },
     {
       label: 'On Order',
@@ -313,7 +333,7 @@ export function ItemForecast() {
 
       {/* ── KPI grid: 4 × 2 ── */}
       {sku && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {kpis.map(k => (
             <MetricCard key={k.label} loading={loading || !computed} {...k} />
           ))}
