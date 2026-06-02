@@ -154,9 +154,11 @@ def read_valuation() -> tuple[list, dict, dict]:
 
 def read_snapshot() -> tuple[list, dict]:
     """Returns (db_rows, supplier_by_sku)."""
-    path = find_file("CustomCurrentInventorySnapshot*.xls")
+    # NetSuite exports the file with or without the "Custom" prefix depending on the run
+    path = find_file("CustomCurrentInventorySnapshot*.xls") \
+        or find_file("CurrentInventorySnapshot*.xls")
     if not path:
-        print("  CustomCurrentInventorySnapshot*.xls not found -- skipping")
+        print("  CurrentInventorySnapshot*.xls not found -- skipping")
         return [], {}
 
     print(f"  {os.path.basename(path)}")
@@ -329,7 +331,7 @@ def main():
     val_rows, ppu_by_sku, desc_by_sku = read_valuation()
 
     print("Reading snapshot...")
-    snap_rows, supplier_by_sku = read_snapshot()
+    snap_rows, supplier_by_sku = read_snapshot()  # matches Custom* or plain Current*
 
     print("Reading monthly sales...")
     sales_rows = read_monthly_sales()
