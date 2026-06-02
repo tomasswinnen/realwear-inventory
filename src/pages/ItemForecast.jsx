@@ -26,8 +26,9 @@ function addMonths(d, n) {
   return new Date(d.getFullYear(), d.getMonth() + n, 1);
 }
 function mean(arr) {
-  if (!arr.length) return 0;
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
+  const valid = arr.filter(v => v != null && !isNaN(v));
+  if (!valid.length) return 0;
+  return valid.reduce((a, b) => a + b, 0) / valid.length;
 }
 function itemCoverageClass(months) {
   if (!isFinite(months) || months > 6) return 'text-success';
@@ -35,7 +36,7 @@ function itemCoverageClass(months) {
   return 'text-danger';
 }
 function fmtNum(v) {
-  if (v == null) return '—';
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
   if (v < 0) return `(${Math.abs(v).toLocaleString()})`;
   return v.toLocaleString();
 }
@@ -89,7 +90,7 @@ function HistoricTooltip({ active, payload, label }) {
   return (
     <div style={TT_STYLE}>
       <p className="text-slate-400 text-[10px] mb-1">{label}</p>
-      <p className="text-white font-medium">{payload[0].value.toLocaleString()} units</p>
+      <p className="text-white font-medium">{fmtNum(payload[0]?.value)} units</p>
     </div>
   );
 }
@@ -376,7 +377,7 @@ export function ItemForecast() {
                       {d.month}
                     </span>
                     <span className={`text-base font-num font-semibold leading-none ${d.isMax ? 'text-accent' : 'text-white'}`}>
-                      {d.qty.toLocaleString()}
+                      {(d.qty ?? 0).toLocaleString()}
                     </span>
                     {d.isMax && (
                       <span className="text-[9px] font-mono text-accent/60 mt-1">peak</span>
