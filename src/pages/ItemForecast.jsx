@@ -575,10 +575,10 @@ export function ItemForecast() {
                                 {fmtNum(row.inv6)}
                               </td>
                               <td className="px-4 py-3 font-mono text-right text-slate-500">
-                                {row.sold3.toLocaleString()}
+                                {fmtNum(row.sold3)}
                               </td>
                               <td className="px-4 py-3 font-mono text-right text-slate-500">
-                                {row.sold6.toLocaleString()}
+                                {fmtNum(row.sold6)}
                               </td>
                               <td className="px-4 py-3">
                                 <input
