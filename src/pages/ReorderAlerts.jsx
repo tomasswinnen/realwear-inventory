@@ -67,17 +67,25 @@ export function ReorderAlerts() {
 
     const skuMap = Object.fromEntries(data.skus.map(s => [s.sku, s]));
 
+    const EXCLUDED_SKUS = new Set(['171040', '171041', '171042']);
+
     return data.skus
+      .filter(sku => {
+        if (EXCLUDED_SKUS.has(sku.sku)) return false;
+        if (sku.description?.toLowerCase().includes('flash')) return false;
+        return true;
+      })
       .map(sku => {
         const snap = latestSnap[sku.sku] ?? {};
         const skuSales = salesBySku[sku.sku] ?? [];
         const avg6 = skuSales.length ? skuSales.reduce((a, b) => a + b, 0) / skuSales.length : 0;
+        const last3 = skuSales.slice(0, 3).reduce((a, b) => a + b, 0);
         const onHand = snap.on_hand_total ?? 0;
         const onOrder = snap.on_order ?? 0;
         const months = calcMonthsCoverage(onHand + onOrder, avg6);
         if (!isFinite(months) || months >= 3) return null;
         const suggested = calcSuggestedQty(sku, avg6);
-        return { ...sku, onHand, onOrder, avg6, months, suggested };
+        return { ...sku, onHand, onOrder, avg6, last3, months, suggested };
       })
       .filter(Boolean)
       .sort((a, b) => a.months - b.months)
@@ -122,7 +130,7 @@ export function ReorderAlerts() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['SKU', 'Description', 'On Hand', 'On Order', 'Avg/Mo', 'Coverage', 'Supplier', 'Lead Time', 'Suggested Qty', 'Action'].map(h => (
+                  {['SKU', 'Description', 'On Hand', 'On Order', 'Avg/Mo', 'Last 3 Mo', 'Coverage', 'Supplier', 'Lead Time', 'Suggested Qty', 'Action'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                   ))}
                 </tr>
@@ -130,7 +138,7 @@ export function ReorderAlerts() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-muted font-mono">
+                    <td colSpan={11} className="px-4 py-10 text-center text-muted font-mono">
                       No SKUs need reordering right now
                     </td>
                   </tr>
@@ -143,6 +151,7 @@ export function ReorderAlerts() {
                     <td className="px-4 py-2.5 font-mono text-white">{row.onHand.toLocaleString()}</td>
                     <td className="px-4 py-2.5 font-mono text-muted">{row.onOrder.toLocaleString()}</td>
                     <td className="px-4 py-2.5 font-mono text-white">{row.avg6.toFixed(0)}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-300">{row.last3.toLocaleString()}</td>
                     <td className="px-4 py-2.5"><CoverageCell months={row.months} /></td>
                     <td className="px-4 py-2.5 text-muted font-sans">{row.supplier}</td>
                     <td className="px-4 py-2.5 font-mono text-muted">{row.lead_time_days ? `${row.lead_time_days}d` : '—'}</td>
