@@ -11,7 +11,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
 import { KPISkeleton, TableSkeleton, ChartSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, coverageColor, formatCurrency } from '../utils/coverage';
+import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchDashboardData() {
   const [skusRes, valRes, snapshotRes, salesRes, poRes] = await Promise.all([
@@ -93,7 +93,7 @@ export function Dashboard() {
   const { kpis, urgentItems, chartData, totalValue } = useMemo(() => {
     if (!data) return {};
 
-    const coverage = buildCoverageMap(data.skus, data.snapshot, data.sales);
+    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
 
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3);

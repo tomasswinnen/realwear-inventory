@@ -6,7 +6,7 @@ import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
-import { calcMonthsCoverage, coverageBg } from '../utils/coverage';
+import { calcMonthsCoverage, coverageBg, isValidSku } from '../utils/coverage';
 
 async function fetchLocationsData() {
   const [skusRes, snapshotRes, salesRes] = await Promise.all([
@@ -76,7 +76,7 @@ export function Locations() {
 
   const { rows, totals } = useMemo(() => {
     if (!data) return { rows: [], totals: {} };
-    const all = buildRows(data.skus, data.snapshot, data.sales);
+    const all = buildRows(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
     const filtered = all.filter(r => {
       const matchSearch = !search || r.sku.toLowerCase().includes(search.toLowerCase()) || r.description?.toLowerCase().includes(search.toLowerCase());
       const matchLoc = locationFilter === 'all' || (locationFilter === 'portland' && r.portland > 0) || (locationFilter === 'hk' && r.hk > 0);

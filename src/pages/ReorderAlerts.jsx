@@ -5,7 +5,7 @@ import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, formatCurrency } from '../utils/coverage';
+import { calcMonthsCoverage, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchReorderData() {
   const [skusRes, snapshotRes, salesRes] = await Promise.all([
@@ -67,14 +67,8 @@ export function ReorderAlerts() {
 
     const skuMap = Object.fromEntries(data.skus.map(s => [s.sku, s]));
 
-    const EXCLUDED_SKUS = new Set(['171040', '171041', '171042']);
-
     return data.skus
-      .filter(sku => {
-        if (EXCLUDED_SKUS.has(sku.sku)) return false;
-        if (sku.description?.toLowerCase().includes('flash')) return false;
-        return true;
-      })
+      .filter(sku => isValidSku(sku.sku))
       .map(sku => {
         const snap = latestSnap[sku.sku] ?? {};
         const skuSales = salesBySku[sku.sku] ?? [];

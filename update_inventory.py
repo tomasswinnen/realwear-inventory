@@ -89,8 +89,13 @@ def safe_float(v) -> float | None:
 
 def is_valid_sku(v: str) -> bool:
     s = str(v).strip()
-    return bool(s) and s.lower() not in ("nan", "none", "", "assembly/bill of materials") \
-        and any(c.isdigit() for c in s)
+    if not s or s.lower() in ("nan", "none", "", "assembly/bill of materials"):
+        return False
+    if ":" in s:
+        return False
+    if s.startswith(("EarBud", "Flash Drive")):
+        return False
+    return any(c.isdigit() for c in s)
 
 
 def upsert(table: str, rows: list, conflict_col: str = None):
@@ -321,10 +326,35 @@ def read_open_pos() -> list:
     return db_rows
 
 
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+
+def cleanup_invalid_skus():
+    """Delete rows with invalid SKU formats from all tables.
+
+    Invalid formats: contains ':', starts with 'EarBud' or 'Flash Drive'.
+    Child tables are deleted before the skus parent to respect FK constraints.
+    """
+    child_tables = ["po_history", "inventory_valuation", "monthly_sales", "inventory_snapshot"]
+    all_tables = child_tables + ["skus"]
+    patterns = ["%:%", "EarBud%", "Flash Drive%"]
+    total = 0
+    for table in all_tables:
+        for pattern in patterns:
+            res = supabase.table(table).delete().like("sku", pattern).execute()
+            if res.data:
+                total += len(res.data)
+    print(f"  cleanup_invalid_skus: {total} rows removed")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     print(f"Directory: {os.path.abspath(SEARCH_DIR)}\n")
+
+    # Step 0: remove any rows with invalid SKU formats
+    print("Cleaning up invalid SKUs...")
+    cleanup_invalid_skus()
+    print()
 
     # Step 1: read all files (no DB writes yet)
     print("Reading valuation...")

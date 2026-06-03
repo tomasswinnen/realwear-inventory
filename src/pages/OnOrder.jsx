@@ -6,7 +6,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
-import { formatCurrency } from '../utils/coverage';
+import { formatCurrency, isValidSku } from '../utils/coverage';
 
 // Statuses that count as "on order" (not yet fully received)
 const ACTIVE_STATUSES = new Set([
@@ -45,11 +45,13 @@ export function OnOrder() {
       if (!latestSnap[s.sku]) latestSnap[s.sku] = s;
     }
 
+    const validPos = data.pos.filter(p => isValidSku(p.sku));
+
     // All unique statuses present in the data
-    const allStatuses = [...new Set(data.pos.map(p => p.status))].sort();
+    const allStatuses = [...new Set(validPos.map(p => p.status))].sort();
 
     // Build rows from po_history, joining sku + snapshot info
-    const rows = data.pos
+    const rows = validPos
       .filter(po => {
         const matchStatus =
           statusFilter === 'all' ||
@@ -82,7 +84,7 @@ export function OnOrder() {
       });
 
     // KPIs over active POs only (regardless of current filter)
-    const activePOs = data.pos.filter(p => ACTIVE_STATUSES.has(p.status));
+    const activePOs = validPos.filter(p => ACTIVE_STATUSES.has(p.status));
     const activeSkus = new Set(activePOs.map(p => p.sku));
     const totalUnits = activePOs.reduce((s, p) => s + (p.qty_ordered ?? 0), 0);
     const totalValue = activePOs.reduce((s, p) => {

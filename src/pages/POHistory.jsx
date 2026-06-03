@@ -6,7 +6,7 @@ import { useQuery } from '../hooks/useQuery';
 import { StatusBadge } from '../components/StatusBadge';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
-import { formatCurrency } from '../utils/coverage';
+import { formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchPOData() {
   const [skusRes, poRes] = await Promise.all([
@@ -30,7 +30,9 @@ export function POHistory() {
   const { rows, skuOptions } = useMemo(() => {
     if (!data) return { rows: [], skuOptions: [] };
     const descBySku = Object.fromEntries(data.skus.map(s => [s.sku, s.description]));
-    const rows = data.pos.map(po => ({ ...po, description: descBySku[po.sku] ?? '' }));
+    const rows = data.pos
+      .filter(po => isValidSku(po.sku))
+      .map(po => ({ ...po, description: descBySku[po.sku] ?? '' }));
 
     const filtered = rows.filter(r => {
       const matchSku = !skuFilter || r.sku === skuFilter;

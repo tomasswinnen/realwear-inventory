@@ -6,7 +6,7 @@ import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, coverageColor, formatCurrency } from '../utils/coverage';
+import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchForecastData() {
   const [skusRes, snapshotRes, salesRes] = await Promise.all([
@@ -55,7 +55,7 @@ export function Forecast() {
 
   const rows = useMemo(() => {
     if (!data) return [];
-    const all = buildRows(data.skus, data.snapshot, data.sales);
+    const all = buildRows(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
     const filtered = search
       ? all.filter(r => r.sku.toLowerCase().includes(search.toLowerCase()) || r.description?.toLowerCase().includes(search.toLowerCase()))
       : all;

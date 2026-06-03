@@ -1,3 +1,11 @@
+export function isValidSku(sku) {
+  if (!sku) return false;
+  const s = String(sku);
+  if (s.includes(':')) return false;
+  if (s.startsWith('EarBud') || s.startsWith('Flash Drive')) return false;
+  return true;
+}
+
 export function calcMonthsCoverage(onHand, avgMonthlySales) {
   if (!avgMonthlySales || avgMonthlySales <= 0) return Infinity;
   return onHand / avgMonthlySales;
