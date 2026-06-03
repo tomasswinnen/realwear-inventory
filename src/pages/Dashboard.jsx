@@ -98,7 +98,7 @@ export function Dashboard() {
 
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3);
-    const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3);
+    const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3 && (s.consumed6 > 0 || s.onHand > 0));
 
     const latestValBySku = {};
     for (const v of data.valuation) {
@@ -177,7 +177,7 @@ export function Dashboard() {
                 <thead>
                   <tr className="border-b border-white/[0.06]">
                     {['SKU', 'Description', 'On Hand', 'Consumed (6m)', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
-                      <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
+                      <th key={h} className="px-4 py-3 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -188,21 +188,21 @@ export function Dashboard() {
                     </tr>
                   ) : urgentItems?.map(item => (
                     <tr key={item.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                      <td className="px-4 py-2.5">
+                      <td className="px-4 py-3">
                         <Link to={`/item/${item.sku}`} className="font-mono text-accent hover:text-accent/80 transition-colors">
                           {item.sku}
                         </Link>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[130px] truncate">{item.description}</td>
-                      <td className="px-4 py-2.5 font-mono text-white">{item.onHand.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 font-mono">
+                      <td className="px-4 py-3 text-slate-300 font-sans max-w-[200px] truncate" title={item.description}>{item.description}</td>
+                      <td className="px-4 py-3 font-mono text-white">{item.onHand.toLocaleString()}</td>
+                      <td className="px-4 py-3 font-mono">
                         <span className="text-white">{item.consumed6.toLocaleString()}</span>
-                        <div className="text-[10px] text-muted">{item.avgSales.toFixed(0)}/mo</div>
+                        <div className="text-xs text-muted">{item.avgSales.toFixed(0)}/mo</div>
                       </td>
-                      <td className="px-4 py-2.5"><CoverageCell months={item.months} /></td>
-                      <td className="px-4 py-2.5"><CoverageCell months={item.monthsPortland} /></td>
-                      <td className="px-4 py-2.5"><CoverageCell months={item.monthsHk} /></td>
-                      <td className="px-4 py-2.5 text-muted font-sans">{item.supplier}</td>
+                      <td className="px-4 py-3"><CoverageCell months={item.months} /></td>
+                      <td className="px-4 py-3"><CoverageCell months={item.monthsPortland} /></td>
+                      <td className="px-4 py-3"><CoverageCell months={item.monthsHk} /></td>
+                      <td className="px-4 py-3 text-muted font-sans max-w-[130px] truncate" title={item.supplier}>{item.supplier}</td>
                     </tr>
                   ))}
                 </tbody>
