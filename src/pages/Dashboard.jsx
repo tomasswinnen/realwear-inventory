@@ -53,14 +53,15 @@ function buildCoverageMap(skus, snapshot, sales) {
     const last3 = skuSales.slice(0, 3);
     const last6 = skuSales.slice(0, 6);
     const avg3 = last3.length ? last3.reduce((a, b) => a + b, 0) / last3.length : 0;
-    const avgSales = last6.length ? last6.reduce((a, b) => a + b, 0) / last6.length : 0;
+    const consumed6 = last6.reduce((a, b) => a + b, 0);
+    const avgSales = last6.length ? consumed6 / last6.length : 0;
     const onHand = snap?.on_hand_total ?? 0;
     const portland = snap?.on_hand_portland ?? 0;
     const hk = snap?.on_hand_hk ?? 0;
     const months = calcMonthsCoverage(onHand, avg3);
     const monthsPortland = calcMonthsCoverage(portland, avg3);
     const monthsHk = calcMonthsCoverage(hk, avg3);
-    return { ...sku, onHand, avgSales, avg3, months, monthsPortland, monthsHk };
+    return { ...sku, onHand, avgSales, avg3, consumed6, months, monthsPortland, monthsHk };
   });
 }
 
@@ -175,7 +176,7 @@ export function Dashboard() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'On Hand', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
+                    {['SKU', 'Description', 'On Hand', 'Consumed (6m)', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
                       <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -183,7 +184,7 @@ export function Dashboard() {
                 <tbody>
                   {urgentItems?.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
+                      <td colSpan={8} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
                     </tr>
                   ) : urgentItems?.map(item => (
                     <tr key={item.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
@@ -194,6 +195,10 @@ export function Dashboard() {
                       </td>
                       <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[130px] truncate">{item.description}</td>
                       <td className="px-4 py-2.5 font-mono text-white">{item.onHand.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 font-mono">
+                        <span className="text-white">{item.consumed6.toLocaleString()}</span>
+                        <div className="text-[10px] text-muted">{item.avgSales.toFixed(0)}/mo</div>
+                      </td>
                       <td className="px-4 py-2.5"><CoverageCell months={item.months} /></td>
                       <td className="px-4 py-2.5"><CoverageCell months={item.monthsPortland} /></td>
                       <td className="px-4 py-2.5"><CoverageCell months={item.monthsHk} /></td>
