@@ -1,0 +1,32 @@
+name: Daily Inventory Update from OneDrive
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 2:00 AM UTC every day
+  workflow_dispatch:        # allow manual trigger from GitHub Actions UI
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install openpyxl pandas xlrd supabase python-dotenv requests msal lxml
+
+      - name: Run inventory update
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          ONEDRIVE_USER: ${{ vars.ONEDRIVE_USER }}
+        run: python github_update.py
