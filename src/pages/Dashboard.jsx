@@ -147,9 +147,11 @@ export function Dashboard() {
 
     const notesBySku = Object.fromEntries((data.notes ?? []).map(n => [n.sku, n]));
 
-    const openPOs = (data.openPOs ?? []).filter(po =>
-      ACTIVE_STATUSES.has(po.status) || po.status?.includes('Pending')
-    );
+    const skuMap = Object.fromEntries(data.skus.map(s => [s.sku, s]));
+
+    const openPOs = (data.openPOs ?? [])
+      .filter(po => ACTIVE_STATUSES.has(po.status) || po.status?.includes('Pending'))
+      .map(po => ({ ...po, description: skuMap[po.sku]?.description ?? null }));
 
     return {
       kpis: { urgent: urgent.length, watchList: watchList.length, total: data.skus.length },
@@ -294,7 +296,7 @@ export function Dashboard() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['PO #', 'SKU', 'Vendor', 'Qty', 'Value', 'Status'].map(h => (
+                    {['PO #', 'SKU', 'Description', 'Vendor', 'Qty', 'Value', 'Status'].map(h => (
                       <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -302,7 +304,7 @@ export function Dashboard() {
                 <tbody>
                   {openPOs?.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-6 text-center text-muted font-mono">No open POs</td>
+                      <td colSpan={7} className="px-4 py-6 text-center text-muted font-mono">No open POs</td>
                     </tr>
                   ) : openPOs?.map(po => (
                     <tr key={po.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
@@ -311,6 +313,9 @@ export function Dashboard() {
                         <Link to={`/item/${po.sku}`} className="font-mono text-accent hover:text-accent/80">
                           {po.sku}
                         </Link>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[180px] truncate" title={po.description ?? undefined}>
+                        {po.description ?? <span className="text-muted">—</span>}
                       </td>
                       <td className="px-4 py-2.5 text-muted font-sans">{po.vendor}</td>
                       <td className="px-4 py-2.5 font-mono text-white">{(po.qty_ordered ?? 0).toLocaleString()}</td>
