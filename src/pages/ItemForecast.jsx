@@ -6,6 +6,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
 } from 'recharts';
 import { supabase, excludeSkus } from '../lib/supabase';
+import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { useQuery } from '../hooks/useQuery';
 import { formatCurrency } from '../utils/coverage';
 import { QueryError } from '../components/QueryError';
@@ -120,7 +121,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -128,6 +129,7 @@ async function fetchItem(sku) {
       .order('month', { ascending: true }),
     supabase.from('inventory_valuation').select('on_hand, inv_value').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
+    supabase.from('sku_notes').select('note, status').eq('sku', sku).maybeSingle(),
   ]);
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -137,6 +139,7 @@ async function fetchItem(sku) {
     snap: snapRes.data?.[0] ?? {},
     sales: salesRes.data ?? [],
     val: valRes.data?.[0] ?? {},
+    note: noteRes.data ?? null,
   };
 }
 
@@ -298,13 +301,21 @@ export function ItemForecast() {
         </div>
 
         {/* Display name */}
-        <div className="flex flex-col gap-1.5 flex-1 min-w-[180px]">
+        <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
           <label className="text-[10px] font-sans font-medium text-slate-500 uppercase tracking-widest">
             Display Name
           </label>
           {loading
             ? <Skeleton className="h-9 w-72 rounded-lg" />
-            : <p className="text-white font-sans text-sm py-2.5 leading-tight">{info.description || '—'}</p>
+            : <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-white font-sans text-sm py-2 leading-tight">{info.description || '—'}</p>
+                  <SkuNoteBadge noteData={data?.note} />
+                </div>
+                {data?.note?.note && (
+                  <p className="text-xs text-muted font-sans italic">{data.note.note}</p>
+                )}
+              </>
           }
         </div>
 

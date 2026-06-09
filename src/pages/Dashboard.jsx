@@ -9,17 +9,19 @@ import { useQuery } from '../hooks/useQuery';
 import { KPICard } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
 import { CoverageCell } from '../components/CoverageCell';
+import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { KPISkeleton, TableSkeleton, ChartSkeleton } from '../components/Skeleton';
 import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchDashboardData() {
-  const [skusRes, valRes, snapshotRes, salesRes, poRes] = await Promise.all([
+  const [skusRes, valRes, snapshotRes, salesRes, poRes, notesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
     excludeSkus(supabase.from('po_history').select('*').eq('status', 'Open').order('created_at', { ascending: false })),
+    supabase.from('sku_notes').select('sku, note, status'),
   ]);
 
   for (const r of [skusRes, valRes, snapshotRes, salesRes, poRes]) {
@@ -32,6 +34,7 @@ async function fetchDashboardData() {
     snapshot: snapshotRes.data,
     sales: salesRes.data,
     openPOs: poRes.data,
+    notes: notesRes.data ?? [],
   };
 }
 
@@ -115,7 +118,7 @@ function ProjectedCoverageCell({ months, monthsWithOrder, onOrder }) {
 export function Dashboard() {
   const { data, loading, error, refetch } = useQuery(fetchDashboardData, []);
 
-  const { kpis, urgentItems, chartData, totalValue } = useMemo(() => {
+  const { kpis, urgentItems, chartData, totalValue, notesBySku } = useMemo(() => {
     if (!data) return {};
 
     const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
@@ -135,11 +138,14 @@ export function Dashboard() {
       .sort((a, b) => a.months - b.months)
       .slice(0, 30);
 
+    const notesBySku = Object.fromEntries((data.notes ?? []).map(n => [n.sku, n]));
+
     return {
       kpis: { urgent: urgent.length, watchList: watchList.length, total: data.skus.length },
       urgentItems: needsReorder.sort((a, b) => a.months - b.months),
       chartData,
       totalValue,
+      notesBySku,
     };
   }, [data]);
 
@@ -225,6 +231,11 @@ export function Dashboard() {
                             <span className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded bg-success/15 text-success leading-none">
                               +{item.onOrder.toLocaleString()} on order
                             </span>
+                          </div>
+                        )}
+                        {notesBySku?.[item.sku] && (
+                          <div className="mt-0.5">
+                            <SkuNoteBadge noteData={notesBySku[item.sku]} />
                           </div>
                         )}
                       </td>

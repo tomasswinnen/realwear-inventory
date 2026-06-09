@@ -4,20 +4,22 @@ import { BarChart, Bar, Cell, ResponsiveContainer } from 'recharts';
 import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
+import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
 import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchForecastData() {
-  const [skusRes, snapshotRes, salesRes] = await Promise.all([
+  const [skusRes, snapshotRes, salesRes, notesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, unit_cost')),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
+    supabase.from('sku_notes').select('sku, note, status'),
   ]);
   for (const r of [skusRes, snapshotRes, salesRes]) {
     if (r.error) throw new Error(r.error.message);
   }
-  return { skus: skusRes.data, snapshot: snapshotRes.data, sales: salesRes.data };
+  return { skus: skusRes.data, snapshot: snapshotRes.data, sales: salesRes.data, notes: notesRes.data ?? [] };
 }
 
 function buildRows(skus, snapshot, sales) {
@@ -53,17 +55,19 @@ export function Forecast() {
   const [sortField, setSortField] = useState('months');
   const [sortDir, setSortDir] = useState('asc');
 
-  const rows = useMemo(() => {
-    if (!data) return [];
+  const { rows, notesBySku } = useMemo(() => {
+    if (!data) return { rows: [], notesBySku: {} };
+    const notesBySku = Object.fromEntries((data.notes ?? []).map(n => [n.sku, n]));
     const all = buildRows(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
     const filtered = search
       ? all.filter(r => r.sku.toLowerCase().includes(search.toLowerCase()) || r.description?.toLowerCase().includes(search.toLowerCase()))
       : all;
-    return [...filtered].sort((a, b) => {
+    const rows = [...filtered].sort((a, b) => {
       let av = a[sortField] ?? 0, bv = b[sortField] ?? 0;
       if (!isFinite(av)) av = 9999; if (!isFinite(bv)) bv = 9999;
       return sortDir === 'asc' ? av - bv : bv - av;
     });
+    return { rows, notesBySku };
   }, [data, search, sortField, sortDir]);
 
   function toggleSort(field) {
@@ -126,6 +130,11 @@ export function Forecast() {
                       <Link to={`/item/${row.sku}`} className="font-mono text-accent hover:text-accent/80 transition-colors">
                         {row.sku}
                       </Link>
+                      {notesBySku?.[row.sku] && (
+                        <div className="mt-0.5">
+                          <SkuNoteBadge noteData={notesBySku[row.sku]} />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[180px] truncate" title={row.description}>
                       {row.description}

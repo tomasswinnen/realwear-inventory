@@ -3,23 +3,25 @@ import { Link } from 'react-router-dom';
 import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
+import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
 import { calcMonthsCoverage, coverageBg, isValidSku } from '../utils/coverage';
 
 async function fetchLocationsData() {
-  const [skusRes, snapshotRes, salesRes] = await Promise.all([
+  const [skusRes, snapshotRes, salesRes, notesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier')),
     excludeSkus(supabase.from('inventory_snapshot')
       .select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at')
       .order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
+    supabase.from('sku_notes').select('sku, note, status'),
   ]);
   for (const r of [skusRes, snapshotRes, salesRes]) {
     if (r.error) throw new Error(r.error.message);
   }
-  return { skus: skusRes.data, snapshot: snapshotRes.data, sales: salesRes.data };
+  return { skus: skusRes.data, snapshot: snapshotRes.data, sales: salesRes.data, notes: notesRes.data ?? [] };
 }
 
 function buildRows(skus, snapshot, sales) {
@@ -74,8 +76,9 @@ export function Locations() {
   const [locationFilter, setLocationFilter] = useState('all');
   const [criticalOnly, setCriticalOnly] = useState(false);
 
-  const { rows, totals } = useMemo(() => {
-    if (!data) return { rows: [], totals: {} };
+  const { rows, totals, notesBySku } = useMemo(() => {
+    if (!data) return { rows: [], totals: {}, notesBySku: {} };
+    const notesBySku = Object.fromEntries((data.notes ?? []).map(n => [n.sku, n]));
     const all = buildRows(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
     const filtered = all.filter(r => {
       const matchSearch = !search || r.sku.toLowerCase().includes(search.toLowerCase()) || r.description?.toLowerCase().includes(search.toLowerCase());
@@ -88,7 +91,7 @@ export function Locations() {
       hk: all.reduce((s, r) => s + r.hk, 0),
       total: all.reduce((s, r) => s + r.total, 0),
     };
-    return { rows: filtered, totals };
+    return { rows: filtered, totals, notesBySku };
   }, [data, search, locationFilter, criticalOnly]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
@@ -164,6 +167,11 @@ export function Locations() {
                   <tr key={row.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                     <td className="px-4 py-2.5">
                       <Link to={`/item/${row.sku}`} className="font-mono text-accent hover:text-accent/80">{row.sku}</Link>
+                      {notesBySku?.[row.sku] && (
+                        <div className="mt-0.5">
+                          <SkuNoteBadge noteData={notesBySku[row.sku]} />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[150px] truncate" title={row.description}>{row.description}</td>
                     <td className="px-4 py-2.5 font-mono text-white">{row.portland.toLocaleString()}</td>

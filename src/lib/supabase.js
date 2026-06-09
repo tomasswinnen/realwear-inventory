@@ -13,6 +13,7 @@ export const supabase = createClient(
 );
 
 // SKUs permanently excluded from all pages and queries.
-export const EXCLUDED_SKUS = ['171026', '171033'];
-const _excl = `(${EXCLUDED_SKUS.join(',')})`;
-export const excludeSkus = (q) => q.not('sku', 'in', _excl);
+export const EXCLUDED_SKUS = ['171026', '171033', '127160*'];
+// Chained .neq() instead of not.in so special chars (e.g. *) aren't misread by PostgREST.
+export const excludeSkus = (q) =>
+  EXCLUDED_SKUS.reduce((acc, sku) => acc.neq('sku', sku), q);
