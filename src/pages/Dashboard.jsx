@@ -14,13 +14,20 @@ import { QueryError } from '../components/QueryError';
 import { KPISkeleton, TableSkeleton, ChartSkeleton } from '../components/Skeleton';
 import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
+// Mirrors OnOrder.jsx — POs that are not yet fully received
+const ACTIVE_STATUSES = new Set([
+  'Open', 'Pending', 'Partial',
+  'Partially Received', 'Pending Bill',
+  'Pending Billing/Partially Received',
+]);
+
 async function fetchDashboardData() {
   const [skusRes, valRes, snapshotRes, salesRes, poRes, notesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
-    excludeSkus(supabase.from('open_pos').select('*').order('sku')),
+    excludeSkus(supabase.from('po_history').select('*').order('created_at', { ascending: false })),
     supabase.from('sku_notes').select('sku, note, status'),
   ]);
 
@@ -118,7 +125,7 @@ function ProjectedCoverageCell({ months, monthsWithOrder, onOrder }) {
 export function Dashboard() {
   const { data, loading, error, refetch } = useQuery(fetchDashboardData, []);
 
-  const { kpis, urgentItems, chartData, totalValue, notesBySku } = useMemo(() => {
+  const { kpis, urgentItems, chartData, totalValue, notesBySku, openPOs } = useMemo(() => {
     if (!data) return {};
 
     const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
@@ -140,12 +147,17 @@ export function Dashboard() {
 
     const notesBySku = Object.fromEntries((data.notes ?? []).map(n => [n.sku, n]));
 
+    const openPOs = (data.openPOs ?? []).filter(po =>
+      ACTIVE_STATUSES.has(po.status) || po.status?.includes('Pending')
+    );
+
     return {
       kpis: { urgent: urgent.length, watchList: watchList.length, total: data.skus.length },
       urgentItems: needsReorder.sort((a, b) => a.months - b.months),
       chartData,
       totalValue,
       notesBySku,
+      openPOs,
     };
   }, [data]);
 
@@ -276,7 +288,7 @@ export function Dashboard() {
           <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
               <h2 className="text-sm font-sans font-semibold text-white">Open Purchase Orders</h2>
-              <span className="text-xs font-mono text-accent">{data?.openPOs?.length ?? 0} open</span>
+              <span className="text-xs font-mono text-accent">{openPOs?.length ?? 0} open</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
@@ -288,12 +300,12 @@ export function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.openPOs?.length === 0 ? (
+                  {openPOs?.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-6 text-center text-muted font-mono">No open POs</td>
                     </tr>
-                  ) : data?.openPOs?.map(po => (
-                    <tr key={`${po.sku}-${po.po_number}`} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                  ) : openPOs?.map(po => (
+                    <tr key={po.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number}</td>
                       <td className="px-4 py-2.5">
                         <Link to={`/item/${po.sku}`} className="font-mono text-accent hover:text-accent/80">
@@ -301,8 +313,8 @@ export function Dashboard() {
                         </Link>
                       </td>
                       <td className="px-4 py-2.5 text-muted font-sans">{po.vendor}</td>
-                      <td className="px-4 py-2.5 font-mono text-white">{po.qty_ordered?.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 font-mono text-white">{formatCurrency(po.open_amount ?? 0)}</td>
+                      <td className="px-4 py-2.5 font-mono text-white">{(po.qty_ordered ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-2.5 font-mono text-white">{formatCurrency((po.qty_ordered ?? 0) * (po.unit_cost ?? 0))}</td>
                       <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
                     </tr>
                   ))}
