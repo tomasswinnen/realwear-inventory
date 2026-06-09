@@ -493,8 +493,17 @@ def main():
         supabase.table("open_pos").delete().neq("sku", "").execute()
         upsert("open_pos", valid_open_po)
     except Exception as e:
-        print(f"  open_pos failed: {e}")
-        print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
+        msg = str(e)
+        if "qty_ordered" in msg:
+            # Table exists but is missing qty_ordered column — retry without it
+            print("  qty_ordered column missing; run:")
+            print("    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS qty_ordered int DEFAULT 0;")
+            rows_slim = [{k: v for k, v in r.items() if k != "qty_ordered"} for r in valid_open_po]
+            supabase.table("open_pos").delete().neq("sku", "").execute()
+            upsert("open_pos", rows_slim)
+        else:
+            print(f"  open_pos failed: {e}")
+            print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
 
     print("\nDone.")
 
