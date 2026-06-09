@@ -11,3 +11,8 @@ export const supabase = createClient(
   supabaseUrl ?? 'https://placeholder.supabase.co',
   supabaseAnonKey ?? 'placeholder'
 );
+
+// SKUs permanently excluded from all pages and queries.
+export const EXCLUDED_SKUS = ['171026', '171033'];
+const _excl = `(${EXCLUDED_SKUS.join(',')})`;
+export const excludeSkus = (q) => q.not('sku', 'in', _excl);

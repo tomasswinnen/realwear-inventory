@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
@@ -10,11 +10,11 @@ import { calcMonthsCoverage, coverageBg, isValidSku } from '../utils/coverage';
 
 async function fetchLocationsData() {
   const [skusRes, snapshotRes, salesRes] = await Promise.all([
-    supabase.from('skus').select('sku, description, supplier'),
-    supabase.from('inventory_snapshot')
+    excludeSkus(supabase.from('skus').select('sku, description, supplier')),
+    excludeSkus(supabase.from('inventory_snapshot')
       .select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at')
-      .order('updated_at', { ascending: false }),
-    supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false }),
+      .order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
   ]);
   for (const r of [skusRes, snapshotRes, salesRes]) {
     if (r.error) throw new Error(r.error.message);

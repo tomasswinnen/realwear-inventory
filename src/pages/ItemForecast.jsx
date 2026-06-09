@@ -5,7 +5,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
 } from 'recharts';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { formatCurrency } from '../utils/coverage';
 import { QueryError } from '../components/QueryError';
@@ -114,7 +114,7 @@ function ForecastTooltip({ active, payload, label }) {
 
 // ─── supabase queries ─────────────────────────────────────────────────────────
 async function fetchAllSkus() {
-  const { data, error } = await supabase.from('skus').select('sku, description').order('sku');
+  const { data, error } = await excludeSkus(supabase.from('skus').select('sku, description').order('sku'));
   if (error) throw new Error(error.message);
   return data ?? [];
 }

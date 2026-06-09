@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from 'recharts';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { KPICard } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
@@ -15,11 +15,11 @@ import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '.
 
 async function fetchDashboardData() {
   const [skusRes, valRes, snapshotRes, salesRes, poRes] = await Promise.all([
-    supabase.from('skus').select('sku, description, supplier, lead_time_days'),
-    supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false }),
-    supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false }),
-    supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false }),
-    supabase.from('po_history').select('*').eq('status', 'Open').order('created_at', { ascending: false }),
+    excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
+    excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
+    excludeSkus(supabase.from('po_history').select('*').eq('status', 'Open').order('created_at', { ascending: false })),
   ]);
 
   for (const r of [skusRes, valRes, snapshotRes, salesRes, poRes]) {
@@ -58,10 +58,19 @@ function buildCoverageMap(skus, snapshot, sales) {
     const onHand = snap?.on_hand_total ?? 0;
     const portland = snap?.on_hand_portland ?? 0;
     const hk = snap?.on_hand_hk ?? 0;
+    const onOrder = snap?.on_order ?? 0;
     const months = calcMonthsCoverage(onHand, avg3);
     const monthsPortland = calcMonthsCoverage(portland, avg3);
     const monthsHk = calcMonthsCoverage(hk, avg3);
-    return { ...sku, onHand, avgSales, avg3, consumed6, months, monthsPortland, monthsHk };
+    const monthsWithOrder = calcMonthsCoverage(onHand + onOrder, avg3);
+    const monthsPortlandWithOrder = calcMonthsCoverage(portland + onOrder, avg3);
+    const monthsHkWithOrder = calcMonthsCoverage(hk + onOrder, avg3);
+    return {
+      ...sku,
+      onHand, onOrder, avgSales, avg3, consumed6,
+      months, monthsPortland, monthsHk,
+      monthsWithOrder, monthsPortlandWithOrder, monthsHkWithOrder,
+    };
   });
 }
 
@@ -84,6 +93,21 @@ function CoverageTooltip({ active, payload }) {
         {isFinite(d.months) ? `${d.months.toFixed(1)} mo` : '∞'} coverage
       </p>
       <p className="font-mono text-xs text-muted">{d.onHand} on hand</p>
+    </div>
+  );
+}
+
+function ProjectedCoverageCell({ months, monthsWithOrder, onOrder }) {
+  if (onOrder <= 0) return <CoverageCell months={months} />;
+  const delta = isFinite(monthsWithOrder) ? monthsWithOrder - (isFinite(months) ? months : 0) : null;
+  return (
+    <div className="space-y-0.5">
+      <CoverageCell months={months} />
+      {delta !== null && (
+        <div className="text-[10px] font-mono text-success leading-none">
+          +{delta.toFixed(1)} mo w/ order
+        </div>
+      )}
     </div>
   );
 }
@@ -176,7 +200,7 @@ export function Dashboard() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'On Hand', 'Consumed (6m)', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
+                    {['SKU', 'Description', 'On Hand', 'On Order', 'Consumed (6m)', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -184,24 +208,47 @@ export function Dashboard() {
                 <tbody>
                   {urgentItems?.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
+                      <td colSpan={9} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
                     </tr>
                   ) : urgentItems?.map(item => (
-                    <tr key={item.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                    <tr
+                      key={item.sku}
+                      className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
+                      style={item.onOrder > 0 ? { backgroundColor: 'rgba(34,197,94,0.05)' } : undefined}
+                    >
                       <td className="px-4 py-3">
                         <Link to={`/item/${item.sku}`} className="font-mono text-accent hover:text-accent/80 transition-colors">
                           {item.sku}
                         </Link>
+                        {item.onOrder > 0 && (
+                          <div className="mt-0.5">
+                            <span className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded bg-success/15 text-success leading-none">
+                              +{item.onOrder.toLocaleString()} on order
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-300 font-sans max-w-[200px] truncate" title={item.description}>{item.description}</td>
                       <td className="px-4 py-3 font-mono text-white">{item.onHand.toLocaleString()}</td>
                       <td className="px-4 py-3 font-mono">
+                        {item.onOrder > 0
+                          ? <span className="text-success">{item.onOrder.toLocaleString()}</span>
+                          : <span className="text-muted">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-3 font-mono">
                         <span className="text-white">{item.consumed6.toLocaleString()}</span>
                         <div className="text-xs text-muted">{item.avgSales.toFixed(0)}/mo</div>
                       </td>
-                      <td className="px-4 py-3"><CoverageCell months={item.months} /></td>
-                      <td className="px-4 py-3"><CoverageCell months={item.monthsPortland} /></td>
-                      <td className="px-4 py-3"><CoverageCell months={item.monthsHk} /></td>
+                      <td className="px-4 py-3">
+                        <ProjectedCoverageCell months={item.months} monthsWithOrder={item.monthsWithOrder} onOrder={item.onOrder} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <ProjectedCoverageCell months={item.monthsPortland} monthsWithOrder={item.monthsPortlandWithOrder} onOrder={item.onOrder} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <ProjectedCoverageCell months={item.monthsHk} monthsWithOrder={item.monthsHkWithOrder} onOrder={item.onOrder} />
+                      </td>
                       <td className="px-4 py-3 text-muted font-sans max-w-[130px] truncate" title={item.supplier}>{item.supplier}</td>
                     </tr>
                   ))}

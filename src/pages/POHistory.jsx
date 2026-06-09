@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SearchableSelect } from '../components/SearchableSelect';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { StatusBadge } from '../components/StatusBadge';
 import { QueryError } from '../components/QueryError';
@@ -10,8 +10,8 @@ import { formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchPOData() {
   const [skusRes, poRes] = await Promise.all([
-    supabase.from('skus').select('sku, description'),
-    supabase.from('po_history').select('*').order('created_at', { ascending: false }),
+    excludeSkus(supabase.from('skus').select('sku, description')),
+    excludeSkus(supabase.from('po_history').select('*').order('created_at', { ascending: false })),
   ]);
   for (const r of [skusRes, poRes]) {
     if (r.error) throw new Error(r.error.message);

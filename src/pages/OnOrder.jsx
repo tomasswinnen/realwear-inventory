@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { StatusBadge } from '../components/StatusBadge';
 import { QueryError } from '../components/QueryError';
@@ -17,11 +17,11 @@ const ACTIVE_STATUSES = new Set([
 
 async function fetchOnOrderData() {
   const [skusRes, snapshotRes, poRes] = await Promise.all([
-    supabase.from('skus').select('sku, description, supplier, unit_cost, lead_time_days'),
-    supabase.from('inventory_snapshot')
+    excludeSkus(supabase.from('skus').select('sku, description, supplier, unit_cost, lead_time_days')),
+    excludeSkus(supabase.from('inventory_snapshot')
       .select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at')
-      .order('updated_at', { ascending: false }),
-    supabase.from('po_history').select('*').order('created_at', { ascending: false }),
+      .order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('po_history').select('*').order('created_at', { ascending: false })),
   ]);
   for (const r of [skusRes, snapshotRes, poRes]) {
     if (r.error) throw new Error(r.error.message);
