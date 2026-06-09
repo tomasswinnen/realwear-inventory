@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import { supabase, excludeSkus } from '../lib/supabase';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
+import { StatusBadge } from '../components/StatusBadge';
 import { useQuery } from '../hooks/useQuery';
 import { formatCurrency } from '../utils/coverage';
 import { QueryError } from '../components/QueryError';
@@ -121,7 +122,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -130,6 +131,8 @@ async function fetchItem(sku) {
     supabase.from('inventory_valuation').select('on_hand, inv_value').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
     supabase.from('sku_notes').select('note, status').eq('sku', sku).maybeSingle(),
+    supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status')
+      .eq('sku', sku).order('created_at', { ascending: false }),
   ]);
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -140,6 +143,7 @@ async function fetchItem(sku) {
     sales: salesRes.data ?? [],
     val: valRes.data?.[0] ?? {},
     note: noteRes.data ?? null,
+    pos: posRes.data ?? [],
   };
 }
 
@@ -216,6 +220,9 @@ export function ItemForecast() {
   const snap = data?.snap ?? {};
   const onHand = snap.on_hand_total ?? 0;
   const onOrder = snap.on_order ?? 0;
+  const openPOs = (data?.pos ?? []).filter(po =>
+    po.status?.includes('Pending') || po.status?.includes('Receipt')
+  );
 
   // KPI card definitions
   const kpis = [
@@ -349,6 +356,43 @@ export function ItemForecast() {
           {kpis.map(k => (
             <MetricCard key={k.label} loading={loading || !computed} {...k} />
           ))}
+        </div>
+      )}
+
+      {/* ── Open Purchase Orders ── */}
+      {sku && openPOs.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ background: '#0d1a27', border: '1px solid rgba(14,165,233,0.25)' }}>
+          <div className="px-5 py-3 border-b" style={{ borderColor: 'rgba(14,165,233,0.12)' }}>
+            <h3 className="text-xs font-sans font-semibold text-blue-400 uppercase tracking-widest">
+              Open Purchase Orders · {openPOs.length}
+            </h3>
+          </div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                {['PO Number', 'Vendor', 'Qty Ordered', 'Status'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {openPOs.map((po, i) => (
+                <tr
+                  key={po.po_number ?? i}
+                  style={{ borderBottom: i < openPOs.length - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
+                >
+                  <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number ?? '—'}</td>
+                  <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>
+                    {po.vendor ?? '—'}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-white">{(po.qty_ordered ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
