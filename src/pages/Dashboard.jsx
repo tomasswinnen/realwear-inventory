@@ -20,7 +20,7 @@ async function fetchDashboardData() {
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
-    excludeSkus(supabase.from('po_history').select('*').eq('status', 'Open').order('created_at', { ascending: false })),
+    excludeSkus(supabase.from('open_pos').select('*').order('sku')),
     supabase.from('sku_notes').select('sku, note, status'),
   ]);
 
@@ -293,7 +293,7 @@ export function Dashboard() {
                       <td colSpan={6} className="px-4 py-6 text-center text-muted font-mono">No open POs</td>
                     </tr>
                   ) : data?.openPOs?.map(po => (
-                    <tr key={po.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                    <tr key={`${po.sku}-${po.po_number}`} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number}</td>
                       <td className="px-4 py-2.5">
                         <Link to={`/item/${po.sku}`} className="font-mono text-accent hover:text-accent/80">
@@ -302,7 +302,7 @@ export function Dashboard() {
                       </td>
                       <td className="px-4 py-2.5 text-muted font-sans">{po.vendor}</td>
                       <td className="px-4 py-2.5 font-mono text-white">{po.qty_ordered?.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 font-mono text-white">{formatCurrency((po.qty_ordered ?? 0) * (po.unit_cost ?? 0))}</td>
+                      <td className="px-4 py-2.5 font-mono text-white">{formatCurrency(po.open_amount ?? 0)}</td>
                       <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
                     </tr>
                   ))}

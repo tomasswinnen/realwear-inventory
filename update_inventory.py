@@ -291,38 +291,106 @@ def read_po_history() -> list:
     return db_rows
 
 
-def read_open_pos() -> list:
+OPEN_PO_SKIP = {"closed", "rejected by supervisor", "nan", "none", ""}
+
+
+def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
+    """Build a single open_pos DB row, or None if status/sku should be excluded."""
+    if not is_valid_sku(sku):
+        return None
+    if not po_number or str(po_number).strip().lower() in ("nan", "none", ""):
+        return None
+    if not status or str(status).strip().lower() in OPEN_PO_SKIP:
+        return None
+    qty = safe_int(qty) or 0
+    cost = safe_float(cost) or 0.0
+    return {
+        "sku":         sku.strip(),
+        "po_number":   str(po_number).strip(),
+        "vendor":      vendor.strip() if vendor else None,
+        "status":      str(status).strip(),
+        "qty_ordered": qty,
+        "open_amount": round(qty * cost, 2),
+        "date":        str(date).strip() if date and str(date).strip() not in ("nan", "None", "") else None,
+    }
+
+
+def read_open_pos():
+    """Primary: Bryant_sOpenPurchaseOrders*.xls (NetSuite SpreadsheetML XML).
+
+    Returns a list of rows, or None if the file is not found (signals fallback).
+    NetSuite column layout: SKU(0), Description(1), Vendor(2), PO#(3),
+    Status(4), Qty Ordered(5), Unit Cost(6), Expected Date(7).
+    """
     path = find_file("Bryant_sOpenPurchaseOrders*.xls")
     if not path:
-        print("  Bryant_sOpenPurchaseOrders*.xls not found -- skipping")
-        return []
+        return None  # caller will try xlsx fallback
 
     print(f"  {os.path.basename(path)}")
     rows = parse_xls_xml(path)
 
+    # Skip metadata rows until we hit the header
     data_start = 0
     for i, r in enumerate(rows):
-        if r and any(kw in str(v).lower() for v in r[:6]
-                     for kw in ("item", "sku", "po", "vendor", "qty")):
+        if r and any(str(v).lower() in ("item", "sku") for v in r[:2]):
             data_start = i + 1
             break
 
     db_rows = []
     for r in rows[data_start:]:
-        sku = r[0].strip() if r else ""
-        if not is_valid_sku(sku):
+        if not r or len(r) < 5:
             continue
-        db_rows.append({
-            "sku": sku,
-            "po_number": r[1].strip() if len(r) > 1 else None,
-            "vendor":    r[2].strip() if len(r) > 2 else None,
-            "status": "Open",
-            "qty_ordered": safe_int(r[3]) or 0 if len(r) > 3 else 0,
-            "unit_cost":   safe_float(r[4]) if len(r) > 4 else None,
-            "expected_date": r[5].strip() if len(r) > 5 and r[5] else None,
-            "created_at": today,
-        })
+        row = _build_open_po_row(
+            sku=r[0], vendor=r[2] if len(r) > 2 else None,
+            po_number=r[3] if len(r) > 3 else None,
+            status=r[4] if len(r) > 4 else None,
+            qty=r[5] if len(r) > 5 else None,
+            cost=r[6] if len(r) > 6 else None,
+            date=r[7] if len(r) > 7 else None,
+        )
+        if row:
+            db_rows.append(row)
+    return db_rows
 
+
+def read_open_pos_xlsx():
+    """Fallback: Accessory_Inv_Mgmt_*.xlsx → 'PO History' sheet.
+
+    Column layout (0-indexed): SKU(0), Description(1), Vendor(2),
+    PO Number(3), Status(4), Qty Ordered(5), Unit Cost(6).
+    Data starts at row index 3 (rows 0-2 are title/filter/header).
+    """
+    import openpyxl
+    matches = [m for m in glob.glob(os.path.join(SEARCH_DIR, "Accessory_Inv_Mgmt_*.xlsx"))
+               if not os.path.basename(m).startswith("~$")]
+    if not matches:
+        print("  Accessory_Inv_Mgmt_*.xlsx not found -- skipping open POs")
+        return []
+
+    path = sorted(matches)[-1]
+    print(f"  {os.path.basename(path)} [PO History sheet]")
+
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    if "PO History" not in wb.sheetnames:
+        wb.close()
+        print("  'PO History' sheet not found -- skipping open POs")
+        return []
+
+    ws = wb["PO History"]
+    db_rows = []
+    for i, r in enumerate(ws.iter_rows(values_only=True)):
+        if i < 3:  # title row, filter control row, header row
+            continue
+        if not r or r[0] is None:
+            continue
+        row = _build_open_po_row(
+            sku=str(r[0]), vendor=str(r[2]) if r[2] else None,
+            po_number=r[3], status=r[4],
+            qty=r[5], cost=r[6],
+        )
+        if row:
+            db_rows.append(row)
+    wb.close()
     return db_rows
 
 
@@ -371,14 +439,17 @@ def main():
 
     print("Reading open POs...")
     open_po_rows = read_open_pos()
+    if open_po_rows is None:
+        print("  Bryant_sOpenPurchaseOrders*.xls not found -- trying Excel fallback")
+        open_po_rows = read_open_pos_xlsx()
 
     # Step 2: collect all SKUs that need a parent row in skus table
+    # (open_po_rows excluded here — filtered to known SKUs after skus upsert)
     all_skus = (
         {r["sku"] for r in val_rows}
         | {r["sku"] for r in snap_rows}
         | {r["sku"] for r in sales_rows}
         | {r["sku"] for r in po_rows}
-        | {r["sku"] for r in open_po_rows}
     )
 
     # Step 3: upsert in FK-safe order
@@ -411,14 +482,19 @@ def main():
     upsert("po_history", po_rows)
 
     print("\n>> open_pos")
-    if open_po_rows:
-        try:
-            upsert("open_pos", open_po_rows, conflict_col="sku,po_number")
-        except Exception as e:
-            print(f"  open_pos upsert failed: {e}")
-            print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
-    else:
-        print("  open_pos: 0 rows -- skipped")
+    # Filter to SKUs already in the skus table (FK safety + per user spec)
+    valid_open_po = [r for r in open_po_rows if r["sku"] in all_skus]
+    skipped = len(open_po_rows) - len(valid_open_po)
+    if skipped:
+        print(f"  ({skipped} rows skipped — SKU not in skus table)")
+    print(f"  {len(valid_open_po)} rows ready to upsert")
+    try:
+        # Full refresh: clear stale POs before reloading current state
+        supabase.table("open_pos").delete().neq("sku", "").execute()
+        upsert("open_pos", valid_open_po)
+    except Exception as e:
+        print(f"  open_pos failed: {e}")
+        print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
 
     print("\nDone.")
 

@@ -55,16 +55,14 @@ create index if not exists idx_po_sku on po_history(sku);
 create index if not exists idx_po_status on po_history(status);
 
 create table if not exists open_pos (
-  id serial primary key,
-  sku text references skus(sku),
-  po_number text,
-  vendor text,
-  status text default 'Open',
-  qty_ordered int default 0,
-  unit_cost numeric,
-  expected_date date,
-  created_at date not null default current_date,
-  unique(sku, po_number)
+  sku         text not null references skus(sku),
+  po_number   text not null,
+  vendor      text,
+  status      text,
+  qty_ordered int     default 0,
+  open_amount numeric default 0,
+  date        date,
+  primary key (sku, po_number)
 );
 create index if not exists idx_open_pos_sku on open_pos(sku);
 
