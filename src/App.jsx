@@ -1,8 +1,10 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Skeleton } from './components/Skeleton';
+import { Login } from './pages/Login';
+import { useAuth } from './hooks/useAuth';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const Forecast = lazy(() => import('./pages/Forecast').then(m => ({ default: m.Forecast })));
@@ -26,12 +28,20 @@ function PageFallback() {
   );
 }
 
+function AuthGuard({ children }) {
+  const session = useAuth();
+  if (session === undefined) return null; // still loading
+  if (!session) return <Navigate to="/login" replace />;
+  return children;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <ErrorBoundary>
         <Routes>
-          <Route element={<Layout />}>
+          <Route path="/login" element={<Login />} />
+          <Route element={<AuthGuard><Layout /></AuthGuard>}>
             <Route index element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
             <Route path="forecast" element={<Suspense fallback={<PageFallback />}><Forecast /></Suspense>} />
             <Route path="locations" element={<Suspense fallback={<PageFallback />}><Locations /></Suspense>} />

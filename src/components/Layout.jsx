@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 const NAV = [
   { to: '/',            label: 'Dashboard',      icon: '⬛' },
@@ -71,10 +72,16 @@ export function Layout() {
           ))}
         </nav>
 
-        <div className="px-4 py-4 border-t border-white/[0.08]">
+        <div className="px-4 py-4 border-t border-white/[0.08] space-y-3">
           <p className="text-[10px] text-muted font-mono uppercase tracking-widest">
             realwear.com
           </p>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className="w-full text-left text-xs text-slate-500 hover:text-slate-300 font-sans transition-colors"
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
