@@ -19,8 +19,12 @@ export function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-    if (err) setError(err.message);
+    try {
+      const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+      if (err) setError(err.message || 'Login failed. Check your credentials.');
+    } catch {
+      setError('Connection error — check console for details.');
+    }
     setLoading(false);
   }
 
