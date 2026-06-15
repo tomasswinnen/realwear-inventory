@@ -580,28 +580,26 @@ def main():
     upsert("po_history", po_rows)
 
     print("\n>> open_pos")
-    # Filter to SKUs already in the skus table (FK safety + per user spec)
     valid_open_po = [r for r in open_po_rows if r["sku"] in all_skus]
     skipped = len(open_po_rows) - len(valid_open_po)
     if skipped:
         print(f"  ({skipped} rows skipped — SKU not in skus table)")
-    print(f"  {len(valid_open_po)} rows ready to upsert")
-    try:
-        # Full refresh: clear stale POs before reloading current state
-        supabase.table("open_pos").delete().neq("sku", "").execute()
-        upsert("open_pos", valid_open_po)
-    except Exception as e:
-        msg = str(e)
-        if "qty_ordered" in msg:
-            # Table exists but is missing qty_ordered column — retry without it
-            print("  qty_ordered column missing; run:")
-            print("    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS qty_ordered int DEFAULT 0;")
-            rows_slim = [{k: v for k, v in r.items() if k != "qty_ordered"} for r in valid_open_po]
-            supabase.table("open_pos").delete().neq("sku", "").execute()
-            upsert("open_pos", rows_slim)
-        else:
-            print(f"  open_pos failed: {e}")
-            print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
+    print(f"  {len(valid_open_po)} rows ready to insert")
+    # Full refresh: delete ALL existing rows first, then insert current file data
+    supabase.table("open_pos").delete().neq("sku", "").execute()
+    if valid_open_po:
+        try:
+            upsert("open_pos", valid_open_po)
+        except Exception as e:
+            msg = str(e)
+            if "qty_ordered" in msg:
+                print("  qty_ordered column missing; run:")
+                print("    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS qty_ordered int DEFAULT 0;")
+                rows_slim = [{k: v for k, v in r.items() if k != "qty_ordered"} for r in valid_open_po]
+                upsert("open_pos", rows_slim)
+            else:
+                print(f"  open_pos failed: {e}")
+                print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
 
     print("\nDone.")
 
