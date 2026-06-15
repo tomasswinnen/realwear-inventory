@@ -5,18 +5,18 @@ import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, formatCurrency, isValidSku, avgMonthly } from '../utils/coverage';
+import { calcMonthsCoverage, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchReorderData() {
-  const [skusRes, snapshotRes, salesRes] = await Promise.all([
+  const [skusRes, snapshotRes, forecastRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('*')),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
-    excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
+    excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m')),
   ]);
-  for (const r of [skusRes, snapshotRes, salesRes]) {
+  for (const r of [skusRes, snapshotRes, forecastRes]) {
     if (r.error) throw new Error(r.error.message);
   }
-  return { skus: skusRes.data, snapshot: snapshotRes.data, sales: salesRes.data };
+  return { skus: skusRes.data, snapshot: snapshotRes.data, forecast: forecastRes.data };
 }
 
 function calcSuggestedQty(skuInfo, avg6) {
@@ -59,12 +59,7 @@ export function ReorderAlerts() {
     for (const s of data.snapshot) {
       if (!latestSnap[s.sku]) latestSnap[s.sku] = s;
     }
-    const anchorMonth = data.sales.length ? data.sales[0].month : null;
-    const salesMapBySku = {};
-    for (const s of data.sales) {
-      if (!salesMapBySku[s.sku]) salesMapBySku[s.sku] = {};
-      salesMapBySku[s.sku][s.month] = s.qty_sold;
-    }
+    const demandMap = Object.fromEntries(data.forecast.map(f => [f.sku, f]));
 
     const reorderRows = [];
     const transferRows = [];
@@ -73,9 +68,9 @@ export function ReorderAlerts() {
       .filter(sku => isValidSku(sku.sku))
       .forEach(sku => {
         const snap = latestSnap[sku.sku] ?? {};
-        const salesMap = salesMapBySku[sku.sku] ?? {};
-        const avg6 = avgMonthly(salesMap, anchorMonth, 6);
-        const last3 = avgMonthly(salesMap, anchorMonth, 3) * 3;
+        const fc   = demandMap[sku.sku];
+        const avg6 = fc?.avg_6m ?? 0;
+        const last3 = (fc?.avg_3m ?? 0) * 3;
         const onHand = snap.on_hand_total ?? 0;
         const onOrder = snap.on_order ?? 0;
         const portland = snap.on_hand_portland ?? 0;
