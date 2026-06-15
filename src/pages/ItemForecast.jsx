@@ -9,7 +9,7 @@ import { supabase, excludeSkus } from '../lib/supabase';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import { useQuery } from '../hooks/useQuery';
-import { formatCurrency, avgMonthly } from '../utils/coverage';
+import { formatCurrency } from '../utils/coverage';
 import { QueryError } from '../components/QueryError';
 import { Skeleton } from '../components/Skeleton';
 
@@ -122,7 +122,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -133,6 +133,7 @@ async function fetchItem(sku) {
     supabase.from('sku_notes').select('note, status').eq('sku', sku).maybeSingle(),
     supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status')
       .eq('sku', sku).order('created_at', { ascending: false }),
+    supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
   ]);
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -144,6 +145,7 @@ async function fetchItem(sku) {
     val: valRes.data?.[0] ?? {},
     note: noteRes.data ?? null,
     pos: posRes.data ?? [],
+    forecast: fcRes.data ?? null,
   };
 }
 
@@ -169,11 +171,9 @@ export function ItemForecast() {
   const computed = useMemo(() => {
     if (!data) return null;
     const salesQty = data.sales.map(s => s.qty_sold);
-    // sales ordered ascending — anchor is the most recent month
-    const anchorMonth = data.sales.length ? data.sales[data.sales.length - 1].month : null;
-    const salesMap = Object.fromEntries(data.sales.map(s => [s.month, s.qty_sold]));
-    const a3 = avgMonthly(salesMap, anchorMonth, 3);
-    const a6 = avgMonthly(salesMap, anchorMonth, 6);
+    // Use pre-computed demand_forecast values (global calendar-month anchor) for consistency
+    const a3 = data.forecast?.avg_3m ?? 0;
+    const a6 = data.forecast?.avg_6m ?? 0;
     const peak = salesQty.length ? Math.max(...salesQty) : 0;
 
     const onHand = data.snap.on_hand_total ?? 0;
