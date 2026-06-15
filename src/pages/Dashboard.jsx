@@ -53,7 +53,7 @@ function formatSaleMonth(isoDate) {
   return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1]} ${y}`;
 }
 
-function buildCoverageMap(skus, snapshot, forecast) {
+function buildCoverageMap(skus, snapshot, forecast, activePOQtyBySku = {}) {
   const latestSnapshot = {};
   for (const s of snapshot) {
     if (!latestSnapshot[s.sku]) latestSnapshot[s.sku] = s;
@@ -70,7 +70,8 @@ function buildCoverageMap(skus, snapshot, forecast) {
     const onHand = snap?.on_hand_total ?? 0;
     const portland = snap?.on_hand_portland ?? 0;
     const hk = snap?.on_hand_hk ?? 0;
-    const onOrder = snap?.on_order ?? 0;
+    // Use the higher of: NetSuite snapshot on_order vs sum of active POs
+    const onOrder = Math.max(snap?.on_order ?? 0, activePOQtyBySku[sku.sku] ?? 0);
     const months = calcMonthsCoverage(onHand, avgSales);
     const monthsPortland = calcMonthsCoverage(portland, avgSales);
     const monthsHk = calcMonthsCoverage(hk, avgSales);
@@ -130,7 +131,14 @@ export function Dashboard() {
   const { kpis, urgentItems, chartData, totalValue, notesBySku, openPOs, dormantItems } = useMemo(() => {
     if (!data) return {};
 
-    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.forecast);
+    // Sum qty_ordered from active POs per SKU — supplements inventory_snapshot.on_order
+    const activePOQtyBySku = {};
+    for (const po of data.openPOs ?? []) {
+      if (ACTIVE_STATUSES.has(po.status) || po.status?.includes('Pending')) {
+        activePOQtyBySku[po.sku] = (activePOQtyBySku[po.sku] ?? 0) + (po.qty_ordered ?? 0);
+      }
+    }
+    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.forecast, activePOQtyBySku);
 
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1 && s.total12 > 0);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3 && s.total12 > 0);

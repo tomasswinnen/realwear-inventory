@@ -179,6 +179,11 @@ export function ItemForecast() {
     const onHand = data.snap.on_hand_total ?? 0;
     const portland = data.snap.on_hand_portland ?? 0;
     const hk = data.snap.on_hand_hk ?? 0;
+    // Use the higher of: NetSuite snapshot on_order vs sum of active POs
+    const posOnOrder = (data.pos ?? [])
+      .filter(po => po.status?.includes('Pending') || po.status?.includes('Receipt'))
+      .reduce((sum, po) => sum + (po.qty_ordered ?? 0), 0);
+    const onOrderEffective = Math.max(data.snap.on_order ?? 0, posOnOrder);
     const coverage = a6 > 0 ? onHand / a6 : Infinity;
     const coveragePortland = a6 > 0 ? portland / a6 : Infinity;
     const coverageHk = a6 > 0 ? hk / a6 : Infinity;
@@ -214,7 +219,7 @@ export function ItemForecast() {
 
     const projMin = Math.min(0, ...projRows.flatMap(r => [r.inv3, r.inv6]));
 
-    return { a3, a6, peak, coverage, coveragePortland, coverageHk, portland, hk, invValue, histChart, histMax, projRows, projMin };
+    return { a3, a6, peak, coverage, coveragePortland, coverageHk, portland, hk, invValue, histChart, histMax, projRows, projMin, onOrderEffective };
   }, [data, qtyReceived, growthRate]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
@@ -222,7 +227,7 @@ export function ItemForecast() {
   const info = data?.info ?? {};
   const snap = data?.snap ?? {};
   const onHand = snap.on_hand_total ?? 0;
-  const onOrder = snap.on_order ?? 0;
+  const onOrder = computed?.onOrderEffective ?? snap.on_order ?? 0;
   const openPOs = (data?.pos ?? []).filter(po =>
     po.status?.includes('Pending') || po.status?.includes('Receipt')
   );
