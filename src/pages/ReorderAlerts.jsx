@@ -93,7 +93,7 @@ export function ReorderAlerts() {
           const hkLow  = isFinite(monthsHk)  && monthsHk  < 2;
           const pdxOk  = !isFinite(monthsPdx) || monthsPdx >= 3;
           const hkOk   = !isFinite(monthsHk)  || monthsHk  >= 3;
-          if ((pdxLow && hkOk) || (hkLow && pdxOk)) {
+          if (avg6 >= 1 && ((pdxLow && hkOk) || (hkLow && pdxOk))) {
             const from = pdxLow ? 'HK → PDX' : 'PDX → HK';
             const lowWh = pdxLow ? 'Portland' : 'Hong Kong';
             const qty = Math.ceil(avg6 * 3) - (pdxLow ? portland : hk);
