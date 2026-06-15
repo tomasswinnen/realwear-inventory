@@ -397,21 +397,40 @@ def read_open_pos_xlsx():
 # ── Demand forecast ───────────────────────────────────────────────────────────
 
 def build_demand_forecast(sales_rows: list) -> list:
-    """Pre-compute avg_3m, avg_6m, and total_12m per SKU."""
+    """Pre-compute avg_3m, avg_6m, and total_12m per SKU using calendar months."""
     from collections import defaultdict
-    by_sku: dict = defaultdict(list)
+
+    by_sku: dict = defaultdict(dict)
     for r in sales_rows:
-        by_sku[r["sku"]].append((r["month"], r["qty_sold"]))
+        by_sku[r["sku"]][r["month"]] = r["qty_sold"]
+
+    # Anchor = most recent month in the entire dataset
+    all_months = [r["month"] for r in sales_rows]
+    if not all_months:
+        return []
+    anchor = max(all_months)  # e.g. "2026-03-01"
+    ay, am = int(anchor[:4]), int(anchor[5:7])
+
+    def calendar_sum(month_map: dict, n: int) -> int:
+        """Sum qty_sold over the last n calendar months from anchor."""
+        total = 0
+        for i in range(n):
+            mo, yr = am - i, ay
+            while mo <= 0:
+                mo += 12
+                yr -= 1
+            key = f"{yr}-{str(mo).zfill(2)}-01"
+            total += month_map.get(key, 0)
+        return total
 
     rows = []
-    for sku, entries in by_sku.items():
-        entries.sort(key=lambda x: x[0], reverse=True)  # newest first
-        qtys = [q for _, q in entries]
+    for sku, month_map in by_sku.items():
+        all_qty = list(month_map.values())
         rows.append({
             "sku":        sku,
-            "avg_3m":     round(sum(qtys[:3]) / 3, 4),
-            "avg_6m":     round(sum(qtys[:6]) / 6, 4),
-            "total_12m":  sum(qtys[:12]),
+            "avg_3m":     round(calendar_sum(month_map, 3) / 3, 4),
+            "avg_6m":     round(calendar_sum(month_map, 6) / 6, 4),
+            "total_12m":  sum(all_qty),
             "updated_at": today,
         })
     return rows
