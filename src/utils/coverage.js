@@ -47,8 +47,17 @@ export function formatCurrency(value) {
   }).format(value);
 }
 
-export function avgLast(arr, n) {
-  if (!arr || arr.length === 0) return 0;
-  const slice = arr.slice(-n);
-  return slice.reduce((s, v) => s + v, 0) / slice.length;
+// Correct average over exactly n calendar months ending at anchorMonth.
+// salesMap: { 'YYYY-MM-DD': qty }  anchorMonth: 'YYYY-MM-DD' most recent month in data.
+// Months missing from salesMap contribute 0 — the denominator is always n.
+export function avgMonthly(salesMap, anchorMonth, n) {
+  if (!anchorMonth) return 0;
+  let sum = 0;
+  const [ay, am] = anchorMonth.slice(0, 7).split('-').map(Number);
+  for (let i = 0; i < n; i++) {
+    let mo = am - i, yr = ay;
+    while (mo <= 0) { mo += 12; yr--; }
+    sum += salesMap[`${yr}-${String(mo).padStart(2, '0')}-01`] ?? 0;
+  }
+  return sum / n;
 }

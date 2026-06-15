@@ -7,7 +7,7 @@ import { CoverageCell } from '../components/CoverageCell';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
+import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku, avgMonthly } from '../utils/coverage';
 
 async function fetchForecastData() {
   const [skusRes, snapshotRes, salesRes, notesRes] = await Promise.all([
@@ -27,21 +27,24 @@ function buildRows(skus, snapshot, sales) {
   for (const s of snapshot) {
     if (!latestSnapshot[s.sku]) latestSnapshot[s.sku] = s;
   }
-  const salesBySku = {};
+  const anchorMonth = sales.length ? sales[0].month : null;
+  const salesMapBySku = {};
+  const salesArrBySku = {};
   for (const s of sales) {
-    if (!salesBySku[s.sku]) salesBySku[s.sku] = [];
-    if (salesBySku[s.sku].length < 6) salesBySku[s.sku].push(s.qty_sold);
+    if (!salesMapBySku[s.sku]) { salesMapBySku[s.sku] = {}; salesArrBySku[s.sku] = []; }
+    salesMapBySku[s.sku][s.month] = s.qty_sold;
+    if (salesArrBySku[s.sku].length < 6) salesArrBySku[s.sku].push(s.qty_sold);
   }
 
   return skus.map(sku => {
     const snap = latestSnapshot[sku.sku] ?? {};
-    const skuSales = salesBySku[sku.sku] ?? [];
-    const avg3 = skuSales.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
-    const avg6 = skuSales.reduce((a, b) => a + b, 0) / 6;
+    const salesMap = salesMapBySku[sku.sku] ?? {};
+    const avg3 = avgMonthly(salesMap, anchorMonth, 3);
+    const avg6 = avgMonthly(salesMap, anchorMonth, 6);
     const onHand = snap.on_hand_total ?? 0;
     const onOrder = snap.on_order ?? 0;
     const months = calcMonthsCoverage(onHand + onOrder, avg6);
-    const chartData = skuSales.slice().reverse().map((v, i) => ({ i, v }));
+    const chartData = (salesArrBySku[sku.sku] ?? []).slice().reverse().map((v, i) => ({ i, v }));
     return {
       sku: sku.sku, description: sku.description, supplier: sku.supplier,
       unitCost: sku.unit_cost, onHand, onOrder, avg3, avg6, months, chartData,

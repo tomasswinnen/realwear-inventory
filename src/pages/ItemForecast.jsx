@@ -9,7 +9,7 @@ import { supabase, excludeSkus } from '../lib/supabase';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import { useQuery } from '../hooks/useQuery';
-import { formatCurrency } from '../utils/coverage';
+import { formatCurrency, avgMonthly } from '../utils/coverage';
 import { QueryError } from '../components/QueryError';
 import { Skeleton } from '../components/Skeleton';
 
@@ -169,8 +169,11 @@ export function ItemForecast() {
   const computed = useMemo(() => {
     if (!data) return null;
     const salesQty = data.sales.map(s => s.qty_sold);
-    const a3 = salesQty.slice(-3).reduce((s, v) => s + v, 0) / 3;
-    const a6 = salesQty.slice(-6).reduce((s, v) => s + v, 0) / 6;
+    // sales ordered ascending — anchor is the most recent month
+    const anchorMonth = data.sales.length ? data.sales[data.sales.length - 1].month : null;
+    const salesMap = Object.fromEntries(data.sales.map(s => [s.month, s.qty_sold]));
+    const a3 = avgMonthly(salesMap, anchorMonth, 3);
+    const a6 = avgMonthly(salesMap, anchorMonth, 6);
     const peak = salesQty.length ? Math.max(...salesQty) : 0;
 
     const onHand = data.snap.on_hand_total ?? 0;

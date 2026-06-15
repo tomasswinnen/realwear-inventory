@@ -7,7 +7,7 @@ import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
-import { calcMonthsCoverage, coverageBg, isValidSku } from '../utils/coverage';
+import { calcMonthsCoverage, coverageBg, isValidSku, avgMonthly } from '../utils/coverage';
 
 async function fetchLocationsData() {
   const [skusRes, snapshotRes, salesRes, notesRes] = await Promise.all([
@@ -29,16 +29,16 @@ function buildRows(skus, snapshot, sales) {
   for (const s of snapshot) {
     if (!latestSnap[s.sku]) latestSnap[s.sku] = s;
   }
-  const salesBySku = {};
+  const anchorMonth = sales.length ? sales[0].month : null;
+  const salesMapBySku = {};
   for (const s of sales) {
-    if (!salesBySku[s.sku]) salesBySku[s.sku] = [];
-    if (salesBySku[s.sku].length < 6) salesBySku[s.sku].push(s.qty_sold);
+    if (!salesMapBySku[s.sku]) salesMapBySku[s.sku] = {};
+    salesMapBySku[s.sku][s.month] = s.qty_sold;
   }
 
   return skus.map(sku => {
     const snap = latestSnap[sku.sku] ?? {};
-    const skuSales = salesBySku[sku.sku] ?? [];
-    const avg6 = skuSales.reduce((a, b) => a + b, 0) / 6;
+    const avg6 = avgMonthly(salesMapBySku[sku.sku] ?? {}, anchorMonth, 6);
     const portland = snap.on_hand_portland ?? 0;
     const hk = snap.on_hand_hk ?? 0;
     const total = snap.on_hand_total ?? 0;

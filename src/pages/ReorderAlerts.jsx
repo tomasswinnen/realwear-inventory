@@ -5,13 +5,13 @@ import { useQuery } from '../hooks/useQuery';
 import { CoverageCell } from '../components/CoverageCell';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, formatCurrency, isValidSku } from '../utils/coverage';
+import { calcMonthsCoverage, formatCurrency, isValidSku, avgMonthly } from '../utils/coverage';
 
 async function fetchReorderData() {
   const [skusRes, snapshotRes, salesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('*')),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_order').order('updated_at', { ascending: false })),
-    excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold').order('month', { ascending: false })),
+    excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
   ]);
   for (const r of [skusRes, snapshotRes, salesRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -59,10 +59,11 @@ export function ReorderAlerts() {
     for (const s of data.snapshot) {
       if (!latestSnap[s.sku]) latestSnap[s.sku] = s;
     }
-    const salesBySku = {};
+    const anchorMonth = data.sales.length ? data.sales[0].month : null;
+    const salesMapBySku = {};
     for (const s of data.sales) {
-      if (!salesBySku[s.sku]) salesBySku[s.sku] = [];
-      if (salesBySku[s.sku].length < 6) salesBySku[s.sku].push(s.qty_sold);
+      if (!salesMapBySku[s.sku]) salesMapBySku[s.sku] = {};
+      salesMapBySku[s.sku][s.month] = s.qty_sold;
     }
 
     const skuMap = Object.fromEntries(data.skus.map(s => [s.sku, s]));
@@ -71,9 +72,9 @@ export function ReorderAlerts() {
       .filter(sku => isValidSku(sku.sku))
       .map(sku => {
         const snap = latestSnap[sku.sku] ?? {};
-        const skuSales = salesBySku[sku.sku] ?? [];
-        const avg6 = skuSales.reduce((a, b) => a + b, 0) / 6;
-        const last3 = skuSales.slice(0, 3).reduce((a, b) => a + b, 0);
+        const salesMap = salesMapBySku[sku.sku] ?? {};
+        const avg6 = avgMonthly(salesMap, anchorMonth, 6);
+        const last3 = avgMonthly(salesMap, anchorMonth, 3) * 3;
         const onHand = snap.on_hand_total ?? 0;
         const onOrder = snap.on_order ?? 0;
         const months = calcMonthsCoverage(onHand + onOrder, avg6);
