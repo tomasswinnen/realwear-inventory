@@ -22,13 +22,14 @@ const ACTIVE_STATUSES = new Set([
 ]);
 
 async function fetchDashboardData() {
-  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes] = await Promise.all([
+  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
     excludeSkus(supabase.from('po_history').select('*').order('created_at', { ascending: false })),
     supabase.from('sku_notes').select('sku, note, status'),
+    excludeSkus(supabase.from('monthly_sales').select('sku, month').gt('qty_sold', 0).order('month', { ascending: false })),
   ]);
 
   for (const r of [skusRes, valRes, snapshotRes, forecastRes, poRes]) {
@@ -42,7 +43,14 @@ async function fetchDashboardData() {
     forecast: forecastRes.data,
     openPOs: poRes.data,
     notes: notesRes.data ?? [],
+    sales: salesRes.data ?? [],
   };
+}
+
+function formatSaleMonth(isoDate) {
+  if (!isoDate) return 'Never';
+  const [y, m] = isoDate.split('-');
+  return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1]} ${y}`;
 }
 
 function buildCoverageMap(skus, snapshot, forecast) {
@@ -119,7 +127,7 @@ function ProjectedCoverageCell({ months, monthsWithOrder, onOrder }) {
 export function Dashboard() {
   const { data, loading, error, refetch } = useQuery(fetchDashboardData, []);
 
-  const { kpis, urgentItems, chartData, totalValue, notesBySku, openPOs } = useMemo(() => {
+  const { kpis, urgentItems, chartData, totalValue, notesBySku, openPOs, dormantItems } = useMemo(() => {
     if (!data) return {};
 
     const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.forecast);
@@ -127,6 +135,7 @@ export function Dashboard() {
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1 && s.total12 > 0);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3 && s.total12 > 0);
     const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3 && s.total12 > 0);
+    const reorderSkus = new Set(needsReorder.map(s => s.sku));
 
     const latestValBySku = {};
     for (const v of data.valuation) {
@@ -147,6 +156,26 @@ export function Dashboard() {
       .filter(po => ACTIVE_STATUSES.has(po.status) || po.status?.includes('Pending'))
       .map(po => ({ ...po, description: skuMap[po.sku]?.description ?? null }));
 
+    // Last sale month per SKU (sales already ordered desc, qty_sold > 0)
+    const lastSaleBySkuMap = {};
+    for (const s of data.sales) {
+      if (!lastSaleBySkuMap[s.sku]) lastSaleBySkuMap[s.sku] = s.month;
+    }
+
+    const dormantItems = coverage
+      .filter(s =>
+        s.onHand > 0 &&
+        (s.avg3 === 0 || s.avgSales * 6 < 2) &&
+        !reorderSkus.has(s.sku)
+      )
+      .map(s => ({
+        ...s,
+        invValue: latestValBySku[s.sku]?.inv_value ?? 0,
+        lastSaleMonth: lastSaleBySkuMap[s.sku] ?? null,
+        noteData: notesBySku[s.sku] ?? null,
+      }))
+      .sort((a, b) => b.invValue - a.invValue);
+
     return {
       kpis: { urgent: urgent.length, watchList: watchList.length, total: data.skus.length },
       urgentItems: needsReorder.sort((a, b) => a.months - b.months),
@@ -154,6 +183,7 @@ export function Dashboard() {
       totalValue,
       notesBySku,
       openPOs,
+      dormantItems,
     };
   }, [data]);
 
@@ -323,6 +353,51 @@ export function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Dormant Stock */}
+      {loading ? <TableSkeleton rows={4} cols={6} /> : dormantItems?.length > 0 && (
+        <div className="bg-card rounded-lg border border-amber-500/20 overflow-hidden">
+          <div className="px-4 py-3 border-b border-amber-500/15 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-sans font-semibold text-amber-400">Dormant Stock</h2>
+              <p className="text-[10px] font-mono text-muted mt-0.5">Low activity · not ordered recently</p>
+            </div>
+            <span className="text-xs font-mono text-amber-400/70">{dormantItems.length} SKUs</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-white/[0.06]">
+                  {['SKU', 'Description', 'On Hand', 'On Hand Value', 'Last Sale', 'Note'].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dormantItems.map(item => (
+                  <tr key={item.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-2.5">
+                      <Link to={`/item/${item.sku}`} className="font-mono text-accent hover:text-accent/80">{item.sku}</Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[200px] truncate" title={item.description}>{item.description}</td>
+                    <td className="px-4 py-2.5 font-mono text-white">{item.onHand.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 font-mono text-amber-400/80">{formatCurrency(item.invValue)}</td>
+                    <td className="px-4 py-2.5 font-mono text-muted">{formatSaleMonth(item.lastSaleMonth)}</td>
+                    <td className="px-4 py-2.5">
+                      {item.noteData
+                        ? <SkuNoteBadge noteData={item.noteData} />
+                        : <span className="text-muted font-mono">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-2.5 border-t border-white/[0.06]">
+            <p className="text-[10px] text-muted font-mono">{dormantItems.length} SKUs with stock but ≤1 unit/mo avg</p>
+          </div>
+        </div>
+      )}
 
       {/* Stock coverage bar chart */}
       {loading ? (
