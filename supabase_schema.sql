@@ -66,6 +66,14 @@ create table if not exists open_pos (
 );
 create index if not exists idx_open_pos_sku on open_pos(sku);
 
+create table if not exists demand_forecast (
+  sku        text primary key references skus(sku),
+  avg_3m     numeric default 0,
+  avg_6m     numeric default 0,
+  updated_at date not null default current_date
+);
+create index if not exists idx_demand_forecast_sku on demand_forecast(sku);
+
 -- Enable Row Level Security (recommended)
 alter table skus enable row level security;
 alter table inventory_snapshot enable row level security;
@@ -73,6 +81,7 @@ alter table monthly_sales enable row level security;
 alter table inventory_valuation enable row level security;
 alter table po_history enable row level security;
 alter table open_pos enable row level security;
+alter table demand_forecast enable row level security;
 
 -- Allow anon read access (dashboard is read-only from browser)
 create policy "anon read skus" on skus for select using (true);
@@ -81,3 +90,4 @@ create policy "anon read monthly_sales" on monthly_sales for select using (true)
 create policy "anon read inventory_valuation" on inventory_valuation for select using (true);
 create policy "anon read po_history" on po_history for select using (true);
 create policy "anon read open_pos" on open_pos for select using (true);
+create policy "anon read demand_forecast" on demand_forecast for select using (true);

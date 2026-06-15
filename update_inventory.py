@@ -394,6 +394,28 @@ def read_open_pos_xlsx():
     return db_rows
 
 
+# ── Demand forecast ───────────────────────────────────────────────────────────
+
+def build_demand_forecast(sales_rows: list) -> list:
+    """Pre-compute avg_3m and avg_6m per SKU, always dividing by 3 or 6."""
+    from collections import defaultdict
+    by_sku: dict = defaultdict(list)
+    for r in sales_rows:
+        by_sku[r["sku"]].append((r["month"], r["qty_sold"]))
+
+    rows = []
+    for sku, entries in by_sku.items():
+        entries.sort(key=lambda x: x[0], reverse=True)  # newest first
+        qtys = [q for _, q in entries]
+        rows.append({
+            "sku":        sku,
+            "avg_3m":     round(sum(qtys[:3]) / 3, 4),
+            "avg_6m":     round(sum(qtys[:6]) / 6, 4),
+            "updated_at": today,
+        })
+    return rows
+
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
 def cleanup_invalid_skus():
@@ -402,7 +424,7 @@ def cleanup_invalid_skus():
     Invalid formats: contains ':', starts with 'EarBud' or 'Flash Drive'.
     Child tables are deleted before the skus parent to respect FK constraints.
     """
-    child_tables = ["po_history", "inventory_valuation", "monthly_sales", "inventory_snapshot"]
+    child_tables = ["po_history", "inventory_valuation", "monthly_sales", "inventory_snapshot", "demand_forecast"]
     all_tables = child_tables + ["skus"]
     patterns = ["%:%", "EarBud%", "Flash Drive%"]
     total = 0
@@ -477,6 +499,10 @@ def main():
 
     print("\n>> monthly_sales")
     upsert("monthly_sales", sales_rows, conflict_col="sku,month")
+
+    print("\n>> demand_forecast")
+    forecast_rows = build_demand_forecast(sales_rows)
+    upsert("demand_forecast", forecast_rows, conflict_col="sku")
 
     print("\n>> po_history")
     upsert("po_history", po_rows)
