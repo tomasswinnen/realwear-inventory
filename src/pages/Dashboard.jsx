@@ -12,7 +12,7 @@ import { CoverageCell } from '../components/CoverageCell';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { KPISkeleton, TableSkeleton, ChartSkeleton } from '../components/Skeleton';
-import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku, avgMonthly } from '../utils/coverage';
+import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
 // Mirrors OnOrder.jsx — POs that are not yet fully received
 const ACTIVE_STATUSES = new Set([
@@ -22,16 +22,16 @@ const ACTIVE_STATUSES = new Set([
 ]);
 
 async function fetchDashboardData() {
-  const [skusRes, valRes, snapshotRes, salesRes, poRes, notesRes] = await Promise.all([
+  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
-    excludeSkus(supabase.from('monthly_sales').select('sku, qty_sold, month').order('month', { ascending: false })),
+    excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
     excludeSkus(supabase.from('po_history').select('*').order('created_at', { ascending: false })),
     supabase.from('sku_notes').select('sku, note, status'),
   ]);
 
-  for (const r of [skusRes, valRes, snapshotRes, salesRes, poRes]) {
+  for (const r of [skusRes, valRes, snapshotRes, forecastRes, poRes]) {
     if (r.error) throw new Error(r.error.message);
   }
 
@@ -39,30 +39,25 @@ async function fetchDashboardData() {
     skus: skusRes.data,
     valuation: valRes.data,
     snapshot: snapshotRes.data,
-    sales: salesRes.data,
+    forecast: forecastRes.data,
     openPOs: poRes.data,
     notes: notesRes.data ?? [],
   };
 }
 
-function buildCoverageMap(skus, snapshot, sales) {
+function buildCoverageMap(skus, snapshot, forecast) {
   const latestSnapshot = {};
   for (const s of snapshot) {
     if (!latestSnapshot[s.sku]) latestSnapshot[s.sku] = s;
   }
-
-  const anchorMonth = sales.length ? sales[0].month : null;
-  const salesMapBySku = {};
-  for (const s of sales) {
-    if (!salesMapBySku[s.sku]) salesMapBySku[s.sku] = {};
-    salesMapBySku[s.sku][s.month] = s.qty_sold;
-  }
+  const demandMap = Object.fromEntries(forecast.map(f => [f.sku, f]));
 
   return skus.map(sku => {
     const snap = latestSnapshot[sku.sku];
-    const salesMap = salesMapBySku[sku.sku] ?? {};
-    const avg3 = avgMonthly(salesMap, anchorMonth, 3);
-    const avgSales = avgMonthly(salesMap, anchorMonth, 6);
+    const fc = demandMap[sku.sku];
+    const avg3 = fc?.avg_3m ?? 0;
+    const avgSales = fc?.avg_6m ?? 0;
+    const total12 = fc?.total_12m ?? 0;
     const consumed6 = avgSales * 6;
     const onHand = snap?.on_hand_total ?? 0;
     const portland = snap?.on_hand_portland ?? 0;
@@ -76,7 +71,7 @@ function buildCoverageMap(skus, snapshot, sales) {
     const monthsHkWithOrder = calcMonthsCoverage(hk + onOrder, avg3);
     return {
       ...sku,
-      onHand, onOrder, avgSales, avg3, consumed6,
+      onHand, onOrder, avgSales, avg3, consumed6, total12,
       months, monthsPortland, monthsHk,
       monthsWithOrder, monthsPortlandWithOrder, monthsHkWithOrder,
     };
@@ -127,11 +122,11 @@ export function Dashboard() {
   const { kpis, urgentItems, chartData, totalValue, notesBySku, openPOs } = useMemo(() => {
     if (!data) return {};
 
-    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.sales);
+    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.forecast);
 
-    const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1);
-    const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3);
-    const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3 && (s.consumed6 > 0 || s.onHand > 0));
+    const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1 && s.total12 > 0);
+    const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3 && s.total12 > 0);
+    const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3 && s.total12 > 0);
 
     const latestValBySku = {};
     for (const v of data.valuation) {
