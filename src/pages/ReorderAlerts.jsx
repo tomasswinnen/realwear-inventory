@@ -11,7 +11,7 @@ async function fetchReorderData() {
   const [skusRes, snapshotRes, forecastRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('*')),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
-    excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m')),
+    excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
   ]);
   for (const r of [skusRes, snapshotRes, forecastRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -68,14 +68,16 @@ export function ReorderAlerts() {
       .filter(sku => isValidSku(sku.sku))
       .forEach(sku => {
         const snap = latestSnap[sku.sku] ?? {};
-        const fc   = demandMap[sku.sku];
-        const avg6 = fc?.avg_6m ?? 0;
-        const last3 = (fc?.avg_3m ?? 0) * 3;
+        const fc      = demandMap[sku.sku];
+        const avg6    = fc?.avg_6m ?? 0;
+        const last3   = (fc?.avg_3m ?? 0) * 3;
+        const total12 = fc?.total_12m ?? 0;
+        if (total12 === 0) return; // no sales in past year — skip
         const onHand = snap.on_hand_total ?? 0;
         const onOrder = snap.on_order ?? 0;
         const portland = snap.on_hand_portland ?? 0;
         const hk = snap.on_hand_hk ?? 0;
-        const months = calcMonthsCoverage(onHand + onOrder, avg6);
+        const months = calcMonthsCoverage(onHand, avg6);
         const monthsPdx = calcMonthsCoverage(portland, avg6);
         const monthsHk = calcMonthsCoverage(hk, avg6);
 

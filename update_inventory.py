@@ -397,7 +397,7 @@ def read_open_pos_xlsx():
 # ── Demand forecast ───────────────────────────────────────────────────────────
 
 def build_demand_forecast(sales_rows: list) -> list:
-    """Pre-compute avg_3m and avg_6m per SKU, always dividing by 3 or 6."""
+    """Pre-compute avg_3m, avg_6m, and total_12m per SKU."""
     from collections import defaultdict
     by_sku: dict = defaultdict(list)
     for r in sales_rows:
@@ -411,6 +411,7 @@ def build_demand_forecast(sales_rows: list) -> list:
             "sku":        sku,
             "avg_3m":     round(sum(qtys[:3]) / 3, 4),
             "avg_6m":     round(sum(qtys[:6]) / 6, 4),
+            "total_12m":  sum(qtys[:12]),
             "updated_at": today,
         })
     return rows
