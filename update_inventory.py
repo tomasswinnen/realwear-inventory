@@ -315,13 +315,65 @@ def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
     }
 
 
-def read_open_pos():
-    """Primary: Bryant_sOpenPurchaseOrders*.xls (NetSuite SpreadsheetML XML).
+def read_open_pos_xls_inventory():
+    """Parse OpenInventoryPurchaseOrders*.xls (NetSuite grouped layout).
 
-    Returns a list of rows, or None if the file is not found (signals fallback).
-    NetSuite column layout: SKU(0), Description(1), Vendor(2), PO#(3),
-    Status(4), Qty Ordered(5), Unit Cost(6), Expected Date(7).
+    Rows are grouped: date row → PO number row → blank-col-0 line item rows.
+    Col layout: 0=blank, 1=Vendor, 2=Status, 3=PO Total, 4=Display Name,
+    5=Item Type, 6=SKU, 7=Requestor, 8=Quantity, 9=Qty Received,
+    10=Qty Billed, 11=Qty Open, 12=Unit Price, 13=$ Remaining
+    Returns list of rows, or None if file not found.
     """
+    path = find_file("OpenInventoryPurchaseOrders*.xls")
+    if not path:
+        return None
+
+    print(f"  {os.path.basename(path)}")
+    rows = parse_xls_xml(path)
+
+    db_rows = []
+    current_po = None
+    current_date = None
+
+    for r in rows[7:]:  # skip title/header/category rows
+        if not r:
+            continue
+        col0 = str(r[0]).strip()
+        if not col0:
+            # Line item row
+            if not current_po or len(r) < 13:
+                continue
+            row = _build_open_po_row(
+                sku=r[6] if len(r) > 6 else "",
+                vendor=r[1] if len(r) > 1 else None,
+                po_number=current_po,
+                status=r[2] if len(r) > 2 else None,
+                qty=r[8] if len(r) > 8 else None,
+                cost=r[12] if len(r) > 12 else None,
+                date=current_date,
+            )
+            if row:
+                db_rows.append(row)
+        elif col0.startswith("Total"):
+            pass  # summary rows
+        elif col0.upper().startswith("PO") and col0[2:].strip().isdigit():
+            current_po = col0
+        elif r[0] and str(r[0]).strip() not in ("", "Purchase Orders", "Open Inventory Purchase Orders"):
+            current_date = col0  # date header row
+
+    return db_rows
+
+
+def read_open_pos():
+    """Primary: OpenInventoryPurchaseOrders*.xls (grouped NetSuite format with qtys).
+
+    Falls back to Bryant's XLS, then to xlsx.
+    Returns a list of rows, or None if no file found (signals xlsx fallback).
+    """
+    result = read_open_pos_xls_inventory()
+    if result is not None:
+        return result  # found file; even if 0 rows, don't try Bryant's
+
     path = find_file("Bryant'sOpenPurchaseOrders*.xls") or find_file("Bryant_sOpenPurchaseOrders*.xls")
     if not path:
         return None  # caller will try xlsx fallback
@@ -482,10 +534,7 @@ def main():
     print("Reading open POs...")
     open_po_rows = read_open_pos()
     if open_po_rows is None:
-        print("  Bryant_sOpenPurchaseOrders*.xls not found -- trying Excel fallback")
-        open_po_rows = read_open_pos_xlsx()
-    elif len(open_po_rows) == 0:
-        print("  Bryant_sOpenPurchaseOrders*.xls has no qty data -- trying Excel fallback")
+        print("  No XLS open POs file found -- trying Excel fallback")
         open_po_rows = read_open_pos_xlsx()
 
     # Step 2: collect all SKUs that need a parent row in skus table
