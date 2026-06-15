@@ -169,8 +169,8 @@ export function ItemForecast() {
   const computed = useMemo(() => {
     if (!data) return null;
     const salesQty = data.sales.map(s => s.qty_sold);
-    const a3 = mean(salesQty.slice(-3));
-    const a6 = mean(salesQty.slice(-6));
+    const a3 = salesQty.slice(-3).reduce((s, v) => s + v, 0) / 3;
+    const a6 = salesQty.slice(-6).reduce((s, v) => s + v, 0) / 6;
     const peak = salesQty.length ? Math.max(...salesQty) : 0;
 
     const onHand = data.snap.on_hand_total ?? 0;

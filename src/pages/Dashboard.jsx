@@ -62,9 +62,9 @@ function buildCoverageMap(skus, snapshot, sales) {
     const skuSales = salesBySku[sku.sku] ?? [];
     const last3 = skuSales.slice(0, 3);
     const last6 = skuSales.slice(0, 6);
-    const avg3 = last3.length ? last3.reduce((a, b) => a + b, 0) / last3.length : 0;
+    const avg3 = last3.reduce((a, b) => a + b, 0) / 3;
     const consumed6 = last6.reduce((a, b) => a + b, 0);
-    const avgSales = last6.length ? consumed6 / last6.length : 0;
+    const avgSales = consumed6 / 6;
     const onHand = snap?.on_hand_total ?? 0;
     const portland = snap?.on_hand_portland ?? 0;
     const hk = snap?.on_hand_hk ?? 0;

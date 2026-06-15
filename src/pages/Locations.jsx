@@ -38,7 +38,7 @@ function buildRows(skus, snapshot, sales) {
   return skus.map(sku => {
     const snap = latestSnap[sku.sku] ?? {};
     const skuSales = salesBySku[sku.sku] ?? [];
-    const avg6 = skuSales.length ? skuSales.reduce((a, b) => a + b, 0) / skuSales.length : 0;
+    const avg6 = skuSales.reduce((a, b) => a + b, 0) / 6;
     const portland = snap.on_hand_portland ?? 0;
     const hk = snap.on_hand_hk ?? 0;
     const total = snap.on_hand_total ?? 0;

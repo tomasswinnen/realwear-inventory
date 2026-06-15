@@ -72,7 +72,7 @@ export function ReorderAlerts() {
       .map(sku => {
         const snap = latestSnap[sku.sku] ?? {};
         const skuSales = salesBySku[sku.sku] ?? [];
-        const avg6 = skuSales.length ? skuSales.reduce((a, b) => a + b, 0) / skuSales.length : 0;
+        const avg6 = skuSales.reduce((a, b) => a + b, 0) / 6;
         const last3 = skuSales.slice(0, 3).reduce((a, b) => a + b, 0);
         const onHand = snap.on_hand_total ?? 0;
         const onOrder = snap.on_order ?? 0;

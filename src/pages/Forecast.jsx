@@ -36,8 +36,8 @@ function buildRows(skus, snapshot, sales) {
   return skus.map(sku => {
     const snap = latestSnapshot[sku.sku] ?? {};
     const skuSales = salesBySku[sku.sku] ?? [];
-    const avg3 = skuSales.slice(0, 3).reduce((a, b) => a + b, 0) / Math.max(skuSales.slice(0, 3).length, 1);
-    const avg6 = skuSales.reduce((a, b) => a + b, 0) / Math.max(skuSales.length, 1);
+    const avg3 = skuSales.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
+    const avg6 = skuSales.reduce((a, b) => a + b, 0) / 6;
     const onHand = snap.on_hand_total ?? 0;
     const onOrder = snap.on_order ?? 0;
     const months = calcMonthsCoverage(onHand + onOrder, avg6);
