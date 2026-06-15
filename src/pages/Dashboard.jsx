@@ -71,12 +71,12 @@ function buildCoverageMap(skus, snapshot, forecast) {
     const portland = snap?.on_hand_portland ?? 0;
     const hk = snap?.on_hand_hk ?? 0;
     const onOrder = snap?.on_order ?? 0;
-    const months = calcMonthsCoverage(onHand, avg3);
-    const monthsPortland = calcMonthsCoverage(portland, avg3);
-    const monthsHk = calcMonthsCoverage(hk, avg3);
-    const monthsWithOrder = calcMonthsCoverage(onHand + onOrder, avg3);
-    const monthsPortlandWithOrder = calcMonthsCoverage(portland + onOrder, avg3);
-    const monthsHkWithOrder = calcMonthsCoverage(hk + onOrder, avg3);
+    const months = calcMonthsCoverage(onHand, avgSales);
+    const monthsPortland = calcMonthsCoverage(portland, avgSales);
+    const monthsHk = calcMonthsCoverage(hk, avgSales);
+    const monthsWithOrder = calcMonthsCoverage(onHand + onOrder, avgSales);
+    const monthsPortlandWithOrder = calcMonthsCoverage(portland + onOrder, avgSales);
+    const monthsHkWithOrder = calcMonthsCoverage(hk + onOrder, avgSales);
     return {
       ...sku,
       onHand, onOrder, avgSales, avg3, consumed6, total12,
