@@ -135,7 +135,6 @@ export function Dashboard() {
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1 && s.total12 > 0);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3 && s.total12 > 0);
     const needsReorder = coverage.filter(s => isFinite(s.months) && s.months < 3 && s.total12 > 0);
-    const reorderSkus = new Set(needsReorder.map(s => s.sku));
 
     const latestValBySku = {};
     for (const v of data.valuation) {
@@ -163,11 +162,7 @@ export function Dashboard() {
     }
 
     const dormantItems = coverage
-      .filter(s =>
-        s.onHand > 0 &&
-        (s.avg3 === 0 || s.avgSales * 6 < 2) &&
-        !reorderSkus.has(s.sku)
-      )
+      .filter(s => s.onHand > 0 && s.total12 === 0)
       .map(s => ({
         ...s,
         invValue: latestValBySku[s.sku]?.inv_value ?? 0,
