@@ -322,7 +322,7 @@ def read_open_pos():
     NetSuite column layout: SKU(0), Description(1), Vendor(2), PO#(3),
     Status(4), Qty Ordered(5), Unit Cost(6), Expected Date(7).
     """
-    path = find_file("Bryant_sOpenPurchaseOrders*.xls")
+    path = find_file("Bryant'sOpenPurchaseOrders*.xls") or find_file("Bryant_sOpenPurchaseOrders*.xls")
     if not path:
         return None  # caller will try xlsx fallback
 
@@ -367,7 +367,7 @@ def read_open_pos_xlsx():
         print("  Accessory_Inv_Mgmt_*.xlsx not found -- skipping open POs")
         return []
 
-    path = sorted(matches)[-1]
+    path = max(matches, key=os.path.getmtime)
     print(f"  {os.path.basename(path)} [PO History sheet]")
 
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -483,6 +483,9 @@ def main():
     open_po_rows = read_open_pos()
     if open_po_rows is None:
         print("  Bryant_sOpenPurchaseOrders*.xls not found -- trying Excel fallback")
+        open_po_rows = read_open_pos_xlsx()
+    elif len(open_po_rows) == 0:
+        print("  Bryant_sOpenPurchaseOrders*.xls has no qty data -- trying Excel fallback")
         open_po_rows = read_open_pos_xlsx()
 
     # Step 2: collect all SKUs that need a parent row in skus table
