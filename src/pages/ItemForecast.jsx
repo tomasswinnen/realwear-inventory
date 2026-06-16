@@ -24,6 +24,17 @@ function fmtMo(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   return `${MO[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
 }
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  let d = new Date(dateStr);
+  if (isNaN(d.getTime())) {
+    // Try M/D/YYYY format from XLS exports
+    const parts = String(dateStr).split('/');
+    if (parts.length === 3) d = new Date(+parts[2], +parts[0] - 1, +parts[1]);
+  }
+  if (isNaN(d.getTime())) return String(dateStr);
+  return `${MO[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
 function addMonths(d, n) {
   return new Date(d.getFullYear(), d.getMonth() + n, 1);
 }
@@ -122,7 +133,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -131,9 +142,11 @@ async function fetchItem(sku) {
     supabase.from('inventory_valuation').select('on_hand, inv_value').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
     supabase.from('sku_notes').select('note, status').eq('sku', sku).maybeSingle(),
-    supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status')
+    supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status, created_at')
       .eq('sku', sku).order('created_at', { ascending: false }),
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
+    supabase.from('open_pos').select('po_number, vendor, qty_ordered, unit_cost, status, date')
+      .eq('sku', sku),
   ]);
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -146,6 +159,7 @@ async function fetchItem(sku) {
     note: noteRes.data ?? null,
     pos: posRes.data ?? [],
     forecast: fcRes.data ?? null,
+    openPos: openPosRes.data ?? [],
   };
 }
 
@@ -221,6 +235,28 @@ export function ItemForecast() {
 
     return { a3, a6, peak, coverage, coveragePortland, coverageHk, portland, hk, invValue, histChart, histMax, projRows, projMin, onOrderEffective };
   }, [data, qtyReceived, growthRate]);
+
+  // Merge po_history + open_pos, dedup by po_number (open_pos wins as fresher), sort newest first
+  const allPOs = useMemo(() => {
+    if (!data) return [];
+    const fromHistory = (data.pos ?? []).map(p => ({
+      po_number: p.po_number, vendor: p.vendor, qty_ordered: p.qty_ordered,
+      unit_cost: p.unit_cost, status: p.status, date: p.created_at ?? null, source: 'history',
+    }));
+    const fromOpen = (data.openPos ?? []).map(p => ({
+      po_number: p.po_number, vendor: p.vendor, qty_ordered: p.qty_ordered,
+      unit_cost: p.unit_cost, status: p.status, date: p.date ?? null, source: 'open',
+    }));
+    const byPO = new Map();
+    for (const po of [...fromHistory, ...fromOpen]) {
+      if (!byPO.has(po.po_number) || po.source === 'open') byPO.set(po.po_number, po);
+    }
+    return [...byPO.values()].sort((a, b) => {
+      const da = a.date ? new Date(a.date) : new Date(0);
+      const db = b.date ? new Date(b.date) : new Date(0);
+      return db - da;
+    });
+  }, [data]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
@@ -695,6 +731,58 @@ export function ItemForecast() {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* ── PO History ── */}
+      {sku && !loading && allPOs.length > 0 && (
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ background: '#162030', border: '1px solid rgba(148,163,184,0.08)' }}
+        >
+          <div
+            className="px-5 py-3 border-b flex items-center justify-between"
+            style={{ borderColor: 'rgba(148,163,184,0.08)' }}
+          >
+            <h3 className="text-sm font-sans font-semibold text-white">Purchase Order History</h3>
+            <span className="text-xs font-mono text-muted">{allPOs.length} orders</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                  {['Date', 'PO Number', 'Vendor', 'Qty Ordered', 'Status', 'Amount'].map(h => (
+                    <th
+                      key={h}
+                      className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap"
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allPOs.map((po, i) => (
+                  <tr
+                    key={`${po.po_number}-${i}`}
+                    style={{ borderBottom: i < allPOs.length - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
+                    className="hover:bg-white/[0.02] transition-colors"
+                  >
+                    <td className="px-4 py-2.5 font-mono text-slate-400 whitespace-nowrap">{fmtDate(po.date)}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>{po.vendor ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-white">{(po.qty_ordered ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
+                    <td className="px-4 py-2.5 font-mono text-white">
+                      {po.unit_cost && po.qty_ordered
+                        ? formatCurrency((po.qty_ordered ?? 0) * (po.unit_cost ?? 0))
+                        : <span className="text-muted">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

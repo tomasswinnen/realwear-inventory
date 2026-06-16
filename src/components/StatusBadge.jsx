@@ -3,6 +3,7 @@ const STATUS_STYLES = {
   'Pending Receipt':                     'bg-amber-500/15 text-amber-400',
   'Partially Received':                  'bg-blue-500/15 text-blue-400',
   'Fully Billed':                        'bg-success/10 text-success',
+  'Closed':                              'bg-success/10 text-success',
   'Pending Bill':                        'bg-amber-500/15 text-amber-400',
   'Pending Billing/Partially Received':  'bg-blue-500/15 text-blue-400',
   // po_history statuses
