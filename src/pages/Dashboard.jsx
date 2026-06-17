@@ -14,12 +14,6 @@ import { QueryError } from '../components/QueryError';
 import { KPISkeleton, TableSkeleton, ChartSkeleton } from '../components/Skeleton';
 import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
-// Mirrors OnOrder.jsx — POs that are not yet fully received
-const ACTIVE_STATUSES = new Set([
-  'Open', 'Pending', 'Partial',
-  'Partially Received', 'Pending Bill',
-  'Pending Billing/Partially Received',
-]);
 
 async function fetchDashboardData() {
   const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes] = await Promise.all([
@@ -326,8 +320,8 @@ export function Dashboard() {
                     <tr>
                       <td colSpan={7} className="px-4 py-6 text-center text-muted font-mono">No open POs</td>
                     </tr>
-                  ) : openPOs?.map(po => (
-                    <tr key={po.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
+                  ) : openPOs?.map((po, i) => (
+                    <tr key={`${po.po_number}-${po.sku}-${i}`} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number}</td>
                       <td className="px-4 py-2.5">
                         <Link to={`/item/${po.sku}`} className="font-mono text-accent hover:text-accent/80">
