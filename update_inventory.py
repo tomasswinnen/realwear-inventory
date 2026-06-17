@@ -302,7 +302,15 @@ VALID_OPEN_PO_STATUSES = {
     "Partially Received",
     "Pending Bill",
     "Pending Billing/Partially Received",
+    "Approved By Supervisor/Pending Receipt",
 }
+
+def is_valid_open_po_status(status: str) -> bool:
+    """Accept explicit statuses or anything containing 'Pending' or 'Partially Received'."""
+    if status in VALID_OPEN_PO_STATUSES:
+        return True
+    sl = status.lower()
+    return "pending" in sl or "partially received" in sl
 
 # Non-data rows whose col0 text we skip outright
 _SKIP_COL0 = {"Purchase Orders", "Open Inventory Purchase Orders", ""}
@@ -427,7 +435,7 @@ def read_open_pos_xls_inventory():
                 continue
 
             # Status must be in the allowed set
-            if status not in VALID_OPEN_PO_STATUSES:
+            if not is_valid_open_po_status(status):
                 skipped.append(f"  SKIP (status='{status}'): '{sku}' po={current_po}")
                 continue
 
