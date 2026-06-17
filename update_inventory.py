@@ -70,7 +70,7 @@ def find_file(pattern: str) -> str | None:
         m for m in glob.glob(os.path.join(SEARCH_DIR, pattern))
         if not os.path.basename(m).startswith("~$")
     ]
-    return matches[0] if matches else None
+    return max(matches, key=os.path.getmtime) if matches else None
 
 
 def safe_int(v) -> int | None:
