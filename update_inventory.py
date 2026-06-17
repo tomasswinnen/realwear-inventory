@@ -395,8 +395,8 @@ def read_open_pos_xls_inventory():
             current_po = col0.upper()
             continue
 
-        # ── date header row (contains "/", e.g. "1/22/2025") ──
-        if "/" in col0:
+        # ── date header row: contains "/" and short enough to be a date (e.g. "1/22/2025") ──
+        if "/" in col0 and len(col0) < 12:
             current_date = col0
             continue
 
@@ -437,14 +437,12 @@ def read_open_pos_xls_inventory():
                 "po_number":        current_po,
                 "vendor":           vendor or None,
                 "status":           status,
-                "date":             current_date,
+                "po_date":          current_date,
                 "qty_ordered":      int(round(qty_ordered_f)),
                 "qty_received":     int(round(qty_received_f)),
                 "qty_open":         int(round(qty_open_f)),
                 "unit_price":       unit_price,
-                "unit_cost":        unit_price,          # backward compat — existing DB column
                 "amount_remaining": amount_remaining,
-                "open_amount":      amount_remaining,    # backward compat — existing DB column
             }
             db_rows.append(row)
             print(f"    + {row['po_number']}  {row['sku']:<14}  qty={row['qty_ordered']}  "
@@ -683,32 +681,12 @@ def main():
     print(f"  {len(valid_open_po)} rows ready to insert")
     # Full refresh: delete ALL existing rows first, then insert current file data
     supabase.table("open_pos").delete().neq("sku", "").execute()
-    _NEW_OPEN_PO_COLS = {
-        "qty_received":     "integer DEFAULT 0",
-        "qty_open":         "integer DEFAULT 0",
-        "unit_price":       "numeric",
-        "unit_cost":        "numeric",
-        "amount_remaining": "numeric",
-        "qty_ordered":      "integer DEFAULT 0",
-    }
     if valid_open_po:
         try:
             upsert("open_pos", valid_open_po)
         except Exception as e:
-            msg = str(e)
-            # Any "column not found" error means the new columns haven't been added yet.
-            # Strip ALL new columns and retry with only the pre-existing schema.
-            if "column" in msg.lower() and ("not found" in msg.lower() or "PGRST204" in msg):
-                new_cols = list(_NEW_OPEN_PO_COLS.keys())
-                print("  New columns not yet in open_pos schema. Add them with:")
-                for col, dtype in _NEW_OPEN_PO_COLS.items():
-                    print(f"    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS {col} {dtype};")
-                rows_slim = [{k: v for k, v in r.items() if k not in new_cols} for r in valid_open_po]
-                upsert("open_pos", rows_slim)
-                print("  Inserted with existing columns only (unit_cost, open_amount).")
-            else:
-                print(f"  open_pos failed: {e}")
-                print("  Ensure the open_pos table exists — run the SQL in supabase_schema.sql")
+            print(f"  open_pos failed: {e}")
+            print("  Ensure the open_pos table exists — run the SQL in supabase_schema.sql")
 
     print("\nDone.")
 

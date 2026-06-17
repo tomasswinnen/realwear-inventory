@@ -145,7 +145,7 @@ async function fetchItem(sku) {
     supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status, created_at')
       .eq('sku', sku).order('created_at', { ascending: false }),
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
-    supabase.from('open_pos').select('po_number, vendor, qty_ordered, qty_received, qty_open, unit_price, unit_cost, amount_remaining, open_amount, status, date')
+    supabase.from('open_pos').select('po_number, vendor, qty_ordered, qty_received, qty_open, unit_price, amount_remaining, status, po_date')
       .eq('sku', sku),
   ]);
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
@@ -244,8 +244,9 @@ export function ItemForecast() {
       unit_cost: p.unit_cost, status: p.status, date: p.created_at ?? null, source: 'history',
     }));
     const fromOpen = (data.openPos ?? []).map(p => ({
-      po_number: p.po_number, vendor: p.vendor, qty_ordered: p.qty_ordered,
-      unit_cost: p.unit_cost, status: p.status, date: p.date ?? null, source: 'open',
+      po_number: p.po_number, vendor: p.vendor, qty_ordered: p.qty_open,
+      unit_cost: p.unit_price, status: p.status, date: p.po_date ?? null,
+      amount_remaining: p.amount_remaining, source: 'open',
     }));
     const byPO = new Map();
     for (const po of [...fromHistory, ...fromOpen]) {

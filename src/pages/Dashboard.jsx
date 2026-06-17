@@ -27,7 +27,7 @@ async function fetchDashboardData() {
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
-    supabase.from('open_pos').select('po_number, sku, vendor, qty_open, amount_remaining, open_amount, unit_cost, status, date').order('date', { ascending: false }),
+    supabase.from('open_pos').select('po_number, sku, vendor, qty_open, amount_remaining, status, po_date').order('po_date', { ascending: false }),
     supabase.from('sku_notes').select('sku, note, status'),
     excludeSkus(supabase.from('monthly_sales').select('sku, month').gt('qty_sold', 0).order('month', { ascending: false })),
   ]);
@@ -337,7 +337,7 @@ export function Dashboard() {
                       </td>
                       <td className="px-4 py-2.5 text-muted font-sans">{po.vendor}</td>
                       <td className="px-4 py-2.5 font-mono text-white">{(po.qty_open ?? 0).toLocaleString()}</td>
-                      <td className="px-4 py-2.5 font-mono text-white">{formatCurrency(po.amount_remaining ?? po.open_amount ?? 0)}</td>
+                      <td className="px-4 py-2.5 font-mono text-white">{formatCurrency(po.amount_remaining ?? 0)}</td>
                       <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
                     </tr>
                   ))}
