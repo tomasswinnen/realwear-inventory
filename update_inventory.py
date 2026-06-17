@@ -341,47 +341,35 @@ def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
     }
 
 
-def parse_open_pos(folder):
-    """Parse Open Inventory Purchase Orders XLS — verified working parser."""
+def parse_and_upsert_open_pos(supabase, folder):
     import re, xml.etree.ElementTree as ET, os
-
-    # Find newest OpenInventoryPurchaseOrders file
-    files = [f for f in os.listdir(folder)
-             if f.lower().startswith('openinventorypurchaseorders') and f.endswith('.xls')]
+    files = [f for f in os.listdir(folder) if f.lower().startswith('openinventorypurchaseorders') and f.endswith('.xls')]
     if not files:
-        print("    [!] No OpenInventoryPurchaseOrders file found")
-        return []
-
+        print("No OpenInventoryPurchaseOrders file found"); return 0
     newest = max(files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
     path = os.path.join(folder, newest)
-    print(f"    -> Parsing: {newest}")
-
+    print(f"Parsing: {newest}")
     with open(path, 'rb') as f:
         content = f.read()
-
     ns = {'ss': 'urn:schemas-microsoft-com:office:spreadsheet'}
     root = ET.fromstring(content)
     ws = root.find('.//ss:Worksheet', ns)
     table = ws.find('ss:Table', ns)
     rows = table.findall('ss:Row', ns)
-
     current_po = None
     current_date = None
     results = []
-
     for i, row in enumerate(rows):
         cells = row.findall('ss:Cell', ns)
         vals = [cell.find('ss:Data', ns).text if cell.find('ss:Data', ns) is not None else '' for cell in cells]
         if not any(v for v in vals): continue
         v0 = str(vals[0]).strip() if vals[0] else ''
-
         if i < 7: continue
         if '/' in v0 and len(v0) < 12 and v0.count('/') == 2:
             current_date = v0; continue
         if re.match(r'^PO\d+$', v0):
             current_po = v0; continue
         if v0.startswith('Total') or v0.startswith('Purchase Orders'): continue
-
         if v0 == '' and len(vals) > 6 and vals[1]:
             try: qty_open = float(vals[11]) if vals[11] else 0
             except: qty_open = 0
@@ -398,21 +386,16 @@ def parse_open_pos(folder):
                     'unit_price': float(vals[12]) if vals[12] else 0,
                     'amount_remaining': float(vals[13]) if vals[13] else 0,
                 })
-
-    print(f"    + {len(results)} open PO lines found")
-    return results
-
-
-def upsert_open_pos(supabase, folder):
-    rows = parse_open_pos(folder)
-    if not rows: return 0
-    for r in rows:
+    # Coerce float quantities to int — DB columns are integer type
+    for r in results:
         for col in ('qty_ordered', 'qty_received', 'qty_open'):
             if r.get(col) is not None:
                 r[col] = int(r[col])
     supabase.table('open_pos').delete().neq('po_number', '').execute()
-    supabase.table('open_pos').insert(rows).execute()
-    return len(rows)
+    if results:
+        supabase.table('open_pos').insert(results).execute()
+    print(f"Inserted {len(results)} open PO lines")
+    return len(results)
 
 
 def read_open_pos():
@@ -619,8 +602,8 @@ def main():
     upsert("po_history", po_rows)
 
     print("\n>> open_pos")
-    n = upsert_open_pos(supabase, SEARCH_DIR)
-    print(f"  open_pos: {n} rows inserted")
+    n = parse_and_upsert_open_pos(supabase, SEARCH_DIR)
+    print(f"  open_pos: {n} rows")
 
     print("\nDone.")
 
