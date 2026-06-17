@@ -777,11 +777,9 @@ export function ItemForecast() {
                     <td className="px-4 py-2.5 font-mono text-white">
                       {po.amount_remaining != null
                         ? formatCurrency(po.amount_remaining)
-                        : po.open_amount > 0
-                          ? formatCurrency(po.open_amount)
-                          : (po.unit_cost || po.unit_price) && po.qty_ordered
-                            ? formatCurrency((po.qty_ordered ?? 0) * (po.unit_price ?? po.unit_cost ?? 0))
-                            : <span className="text-muted">—</span>}
+                        : po.unit_cost && po.qty_ordered
+                          ? formatCurrency((po.qty_ordered ?? 0) * (po.unit_cost ?? 0))
+                          : <span className="text-muted">—</span>}
                     </td>
                   </tr>
                 ))}

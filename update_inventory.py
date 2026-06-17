@@ -341,136 +341,82 @@ def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
     }
 
 
-def read_open_pos_xls_inventory():
-    """Parse OpenInventoryPurchaseOrders*.xls (NetSuite grouped layout).
+def parse_open_pos(folder):
+    """Parse Open Inventory Purchase Orders XLS — verified working parser."""
+    import re, xml.etree.ElementTree as ET, os
 
-    Exact column layout (header at row 6):
-      col 0: Document Number  — PO number on PO rows, blank on line items
-      col 1: Vendor
-      col 2: Current Status
-      col 3: PO Total
-      col 4: Item Display Name
-      col 5: Item Type
-      col 6: Item Full Name   — SKU
-      col 7: Requestor
-      col 8: Quantity         — qty_ordered
-      col 9: Quantity Received— qty_received
-      col10: Quantity Billed
-      col11: Quantity Open    — qty_open
-      col12: Unit Price       — unit_price
-      col13: $ Remaining      — amount_remaining
+    # Find newest OpenInventoryPurchaseOrders file
+    files = [f for f in os.listdir(folder)
+             if f.lower().startswith('openinventorypurchaseorders') and f.endswith('.xls')]
+    if not files:
+        print("    [!] No OpenInventoryPurchaseOrders file found")
+        return []
 
-    Row types (all after skipping rows 0-6):
-      • col0 starts with "Total"  → subtotal row, skip
-      • col0 contains "/"         → date header row, update current_date
-      • col0 matches ^PO\d+$      → PO number row, update current_po
-      • col0 is empty AND col1 has vendor → line item, parse and store
-      • anything else             → section header, ignore
+    newest = max(files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+    path = os.path.join(folder, newest)
+    print(f"    -> Parsing: {newest}")
 
-    Returns list of DB-ready dicts, or None if file not found.
-    """
-    path = find_file("OpenInventoryPurchaseOrders*.xls")
-    if not path:
-        return None
+    with open(path, 'rb') as f:
+        content = f.read()
 
-    print(f"  {os.path.basename(path)}")
-    raw = parse_xls_xml(path)
+    ns = {'ss': 'urn:schemas-microsoft-com:office:spreadsheet'}
+    root = ET.fromstring(content)
+    ws = root.find('.//ss:Worksheet', ns)
+    table = ws.find('ss:Table', ns)
+    rows = table.findall('ss:Row', ns)
 
-    db_rows = []
-    current_po   = None
+    current_po = None
     current_date = None
-    skipped      = []
+    results = []
 
-    for r in raw[7:]:   # rows 0-6 are title/header rows
-        if not r:
-            continue
-        col0 = str(r[0]).strip() if r[0] else ""
+    for i, row in enumerate(rows):
+        cells = row.findall('ss:Cell', ns)
+        vals = [cell.find('ss:Data', ns).text if cell.find('ss:Data', ns) is not None else '' for cell in cells]
+        if not any(v for v in vals): continue
+        v0 = str(vals[0]).strip() if vals[0] else ''
 
-        # ── subtotal / total rows ── skip unconditionally
-        if "total" in col0.lower():
-            continue
+        if i < 7: continue
+        if '/' in v0 and len(v0) < 12 and v0.count('/') == 2:
+            current_date = v0; continue
+        if re.match(r'^PO\d+$', v0):
+            current_po = v0; continue
+        if v0.startswith('Total') or v0.startswith('Purchase Orders'): continue
 
-        # ── PO number row ──
-        if _PO_RE.match(col0):
-            current_po = col0.upper()
-            continue
+        if v0 == '' and len(vals) > 6 and vals[1]:
+            try: qty_open = float(vals[11]) if vals[11] else 0
+            except: qty_open = 0
+            if qty_open > 0:
+                results.append({
+                    'po_number': current_po,
+                    'po_date': current_date,
+                    'vendor': vals[1],
+                    'status': vals[2],
+                    'sku': vals[6],
+                    'qty_ordered': float(vals[8]) if vals[8] else 0,
+                    'qty_received': float(vals[9]) if vals[9] else 0,
+                    'qty_open': qty_open,
+                    'unit_price': float(vals[12]) if vals[12] else 0,
+                    'amount_remaining': float(vals[13]) if vals[13] else 0,
+                })
 
-        # ── date header row: contains "/" and short enough to be a date (e.g. "1/22/2025") ──
-        if "/" in col0 and len(col0) < 12:
-            current_date = col0
-            continue
+    print(f"    + {len(results)} open PO lines found")
+    return results
 
-        # ── line item row: col0 is blank, col1 has vendor ──
-        if col0 == "" and len(r) > 1 and str(r[1]).strip():
-            if not current_po:
-                continue
-            if len(r) < 14:
-                skipped.append(f"  SKIP (too few cols {len(r)}): po={current_po}")
-                continue
 
-            sku              = str(r[6]).strip()          if len(r) > 6  and r[6]  else ""
-            vendor           = str(r[1]).strip()          if r[1]                  else ""
-            status           = str(r[2]).strip()          if len(r) > 2  and r[2]  else ""
-            qty_ordered_f    = safe_float(r[8])  or 0.0  if len(r) > 8            else 0.0
-            qty_received_f   = safe_float(r[9])  or 0.0  if len(r) > 9            else 0.0
-            qty_open_f       = safe_float(r[11]) or 0.0  if len(r) > 11           else 0.0
-            unit_price       = safe_float(r[12])          if len(r) > 12           else None
-            amount_remaining = safe_float(r[13])          if len(r) > 13           else None
-
-            # PO number must be ^PO\d+$
-            if not _PO_RE.match(current_po):
-                skipped.append(f"  SKIP (bad PO): {current_po} sku={sku}")
-                continue
-
-            # SKU must be non-empty
-            if not sku:
-                skipped.append(f"  SKIP (empty SKU): po={current_po}")
-                continue
-
-            # Only keep rows that still have open quantity
-            if qty_open_f <= 0:
-                skipped.append(f"  SKIP (qty_open={qty_open_f}): '{sku}' po={current_po}")
-                continue
-
-            row = {
-                "sku":              sku,
-                "po_number":        current_po,
-                "vendor":           vendor or None,
-                "status":           status,
-                "po_date":          current_date,
-                "qty_ordered":      int(round(qty_ordered_f)),
-                "qty_received":     int(round(qty_received_f)),
-                "qty_open":         int(round(qty_open_f)),
-                "unit_price":       unit_price,
-                "amount_remaining": amount_remaining,
-            }
-            db_rows.append(row)
-            print(f"    + {row['po_number']}  {row['sku']:<14}  qty={row['qty_ordered']}  "
-                  f"rcvd={row['qty_received']}  open={row['qty_open']}  "
-                  f"unit=${row['unit_price'] or 0:.2f}  remaining=${row['amount_remaining'] or 0:,.2f}"
-                  f"  [{row['status']}]")
-
-        # ── anything else (section headers, etc.) ── ignore
-        # e.g. "Purchase Orders"
-
-    if skipped:
-        print(f"  Skipped {len(skipped)} row(s):")
-        for s in skipped:
-            print(s)
-    print(f"  Parsed {len(db_rows)} valid line item(s)")
-    return db_rows
+def upsert_open_pos(supabase, folder):
+    rows = parse_open_pos(folder)
+    if not rows: return 0
+    for r in rows:
+        for col in ('qty_ordered', 'qty_received', 'qty_open'):
+            if r.get(col) is not None:
+                r[col] = int(r[col])
+    supabase.table('open_pos').delete().neq('po_number', '').execute()
+    supabase.table('open_pos').insert(rows).execute()
+    return len(rows)
 
 
 def read_open_pos():
-    """Primary: OpenInventoryPurchaseOrders*.xls (grouped NetSuite format with qtys).
-
-    Falls back to Bryant's XLS, then to xlsx.
-    Returns a list of rows, or None if no file found (signals xlsx fallback).
-    """
-    result = read_open_pos_xls_inventory()
-    if result is not None:
-        return result  # found file; even if 0 rows, don't try Bryant's
-
+    """Fallback wrapper kept for Bryant's XLS and xlsx paths."""
     path = find_file("Bryant'sOpenPurchaseOrders*.xls") or find_file("Bryant_sOpenPurchaseOrders*.xls")
     if not path:
         return None  # caller will try xlsx fallback
@@ -503,7 +449,7 @@ def read_open_pos():
 
 
 def read_open_pos_xlsx():
-    """Fallback: Accessory_Inv_Mgmt_*.xlsx → 'PO History' sheet.
+    """Fallback: Accessory_Inv_Mgmt_*.xlsx -> 'PO History' sheet.
 
     Column layout (0-indexed): SKU(0), Description(1), Vendor(2),
     PO Number(3), Status(4), Qty Ordered(5), Unit Cost(6).
@@ -629,10 +575,6 @@ def main():
     po_rows = read_po_history()
 
     print("Reading open POs...")
-    open_po_rows = read_open_pos()
-    if open_po_rows is None:
-        print("  No XLS open POs file found -- trying Excel fallback")
-        open_po_rows = read_open_pos_xlsx()
 
     # Step 2: collect all SKUs that need a parent row in skus table
     # (open_po_rows excluded here — filtered to known SKUs after skus upsert)
@@ -677,16 +619,8 @@ def main():
     upsert("po_history", po_rows)
 
     print("\n>> open_pos")
-    valid_open_po = open_po_rows  # qty_open > 0 already enforced in parser
-    print(f"  {len(valid_open_po)} rows ready to insert")
-    # Full refresh: delete ALL existing rows first, then insert current file data
-    supabase.table("open_pos").delete().neq("sku", "").execute()
-    if valid_open_po:
-        try:
-            upsert("open_pos", valid_open_po)
-        except Exception as e:
-            print(f"  open_pos failed: {e}")
-            print("  Ensure the open_pos table exists — run the SQL in supabase_schema.sql")
+    n = upsert_open_pos(supabase, SEARCH_DIR)
+    print(f"  open_pos: {n} rows inserted")
 
     print("\nDone.")
 
