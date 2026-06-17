@@ -238,12 +238,30 @@ export function ItemForecast() {
     return { a3, a6, peak, coverage, coveragePortland, coverageHk, portland, hk, invValue, histChart, histMax, projRows, projMin, onOrderEffective };
   }, [data, qtyReceived, growthRate]);
 
+  // Parse M/D/YYYY or ISO date strings into a reliable Date for sorting
+  function parsePODate(s) {
+    if (!s) return new Date(0);
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(s))) {
+      const [m, d, y] = String(s).split('/').map(Number);
+      return new Date(y, m - 1, d);
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? new Date(0) : d;
+  }
+
   // Merge po_history + open_pos, dedup by po_number (open_pos wins as fresher), sort newest first
   const allPOs = useMemo(() => {
     if (!data) return [];
+    // Build a date lookup from open_pos for dedup'd history rows
+    const openDateByPO = Object.fromEntries(
+      (data.openPos ?? []).map(p => [p.po_number, p.po_date ?? null])
+    );
     const fromHistory = (data.pos ?? []).map(p => ({
       po_number: p.po_number, vendor: p.vendor, qty_ordered: p.qty_ordered,
-      unit_cost: p.unit_cost, status: p.status, date: p.created_at ?? null, source: 'history',
+      unit_cost: p.unit_cost, status: p.status,
+      // Prefer po_date from open_pos over script-run created_at
+      date: openDateByPO[p.po_number] ?? p.created_at ?? null,
+      source: 'history',
     }));
     const fromOpen = (data.openPos ?? []).map(p => ({
       po_number: p.po_number, vendor: p.vendor,
@@ -255,11 +273,7 @@ export function ItemForecast() {
     for (const po of [...fromHistory, ...fromOpen]) {
       if (!byPO.has(po.po_number) || po.source === 'open') byPO.set(po.po_number, po);
     }
-    return [...byPO.values()].sort((a, b) => {
-      const da = a.date ? new Date(a.date) : new Date(0);
-      const db = b.date ? new Date(b.date) : new Date(0);
-      return db - da;
-    });
+    return [...byPO.values()].sort((a, b) => parsePODate(b.date) - parsePODate(a.date));
   }, [data]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
