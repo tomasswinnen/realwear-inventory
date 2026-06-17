@@ -336,17 +336,28 @@ def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
 def read_open_pos_xls_inventory():
     """Parse OpenInventoryPurchaseOrders*.xls (NetSuite grouped layout).
 
-    File structure confirmed from raw dump:
-      Rows 0-6  : header/title rows — skipped
-      Row  7    : 'Purchase Orders' category row — skipped
-      Date rows : col[0] = date string (e.g. '1/22/2025'), rest empty
-      PO rows   : col[0] = 'PO2297' etc., rest empty
-      Line items: col[0] = '', col[1]=Vendor, col[2]=Status, col[3]=POTotal,
-                  col[4]=DisplayName, col[5]=ItemType, col[6]=SKU(FullName),
-                  col[7]=Requestor, col[8]=Qty, col[9]=QtyRecvd,
-                  col[10]=QtyBilled, col[11]=QtyOpen, col[12]=UnitPrice,
-                  col[13]=$Remaining
-      Total rows: col[0] starts with 'Total' — always skipped
+    Exact column layout (header at row 6):
+      col 0: Document Number  — PO number on PO rows, blank on line items
+      col 1: Vendor
+      col 2: Current Status
+      col 3: PO Total
+      col 4: Item Display Name
+      col 5: Item Type
+      col 6: Item Full Name   — SKU
+      col 7: Requestor
+      col 8: Quantity         — qty_ordered
+      col 9: Quantity Received— qty_received
+      col10: Quantity Billed
+      col11: Quantity Open    — qty_open
+      col12: Unit Price       — unit_price
+      col13: $ Remaining      — amount_remaining
+
+    Row types (all after skipping rows 0-6):
+      • col0 starts with "Total"  → subtotal row, skip
+      • col0 contains "/"         → date header row, update current_date
+      • col0 matches ^PO\d+$      → PO number row, update current_po
+      • col0 is empty AND col1 has vendor → line item, parse and store
+      • anything else             → section header, ignore
 
     Returns list of DB-ready dicts, or None if file not found.
     """
@@ -358,74 +369,96 @@ def read_open_pos_xls_inventory():
     raw = parse_xls_xml(path)
 
     db_rows = []
-    current_po = None
+    current_po   = None
     current_date = None
-    skipped = []
+    skipped      = []
 
-    for r in raw[7:]:
+    for r in raw[7:]:   # rows 0-6 are title/header rows
         if not r:
             continue
         col0 = str(r[0]).strip() if r[0] else ""
 
-        # ── Total / subtotal rows ── always skip
+        # ── subtotal / total rows ── skip unconditionally
         if "total" in col0.lower():
             continue
 
-        # ── Line item row (col0 is blank) ──
-        if not col0:
-            if not current_po or len(r) < 13:
+        # ── PO number row ──
+        if _PO_RE.match(col0):
+            current_po = col0.upper()
+            continue
+
+        # ── date header row (contains "/", e.g. "1/22/2025") ──
+        if "/" in col0:
+            current_date = col0
+            continue
+
+        # ── line item row: col0 is blank, col1 has vendor ──
+        if col0 == "" and len(r) > 1 and str(r[1]).strip():
+            if not current_po:
+                continue
+            if len(r) < 14:
+                skipped.append(f"  SKIP (too few cols {len(r)}): po={current_po}")
                 continue
 
-            sku    = str(r[6]).strip() if len(r) > 6 and r[6] else ""
-            vendor = str(r[1]).strip() if len(r) > 1 and r[1] else ""
-            status = str(r[2]).strip() if len(r) > 2 and r[2] else ""
-            qty    = safe_int(r[8])    if len(r) > 8  else None
-            cost   = safe_float(r[12]) if len(r) > 12 else None
+            sku              = str(r[6]).strip()  if len(r) > 6  and r[6]  else ""
+            vendor           = str(r[1]).strip()  if r[1]                  else ""
+            status           = str(r[2]).strip()  if len(r) > 2  and r[2]  else ""
+            qty_ordered      = safe_int(r[8])     if len(r) > 8            else None
+            qty_received     = safe_int(r[9])     if len(r) > 9            else None
+            qty_open         = safe_int(r[11])    if len(r) > 11           else None
+            unit_price       = safe_float(r[12])  if len(r) > 12           else None
+            amount_remaining = safe_float(r[13])  if len(r) > 13           else None
 
-            # Reject if any field contains "total"
-            if any("total" in str(f).lower() for f in [current_po, sku, vendor, status]):
-                skipped.append(f"  SKIP (contains 'total'): po={current_po} sku={sku}")
-                continue
             # PO number must be ^PO\d+$
             if not _PO_RE.match(current_po):
-                skipped.append(f"  SKIP (bad PO format): {current_po}")
+                skipped.append(f"  SKIP (bad PO): {current_po} sku={sku}")
                 continue
-            # SKU must be a valid item identifier
-            if not sku or not is_valid_sku(sku):
-                skipped.append(f"  SKIP (invalid SKU): '{sku}'")
+
+            # SKU must be non-empty, is_valid_sku, and must start with a digit
+            # (filters out supplier-side codes like GOE-0010-V*, Optic Mod UO-1)
+            if not sku:
+                skipped.append(f"  SKIP (empty SKU): po={current_po}")
                 continue
+            if not is_valid_sku(sku):
+                skipped.append(f"  SKIP (invalid SKU): '{sku}' po={current_po}")
+                continue
+            if not sku[0].isdigit():
+                skipped.append(f"  SKIP (non-accessory SKU): '{sku}' po={current_po}")
+                continue
+
             # Status must be in the allowed set
             if status not in VALID_OPEN_PO_STATUSES:
-                skipped.append(f"  SKIP (status '{status}'): po={current_po} sku={sku}")
+                skipped.append(f"  SKIP (status='{status}'): '{sku}' po={current_po}")
                 continue
 
-            unit_cost = cost if cost else None
-            qty_val   = qty  if qty  is not None else 0
-            db_rows.append({
-                "sku":         sku,
-                "po_number":   current_po.upper(),
-                "vendor":      vendor or None,
-                "status":      status,
-                "qty_ordered": qty_val,
-                "unit_cost":   unit_cost,
-                "open_amount": round(qty_val * (unit_cost or 0), 2),
-                "date":        current_date,
-            })
+            row = {
+                "sku":              sku,
+                "po_number":        current_po,
+                "vendor":           vendor or None,
+                "status":           status,
+                "date":             current_date,
+                "qty_ordered":      qty_ordered  if qty_ordered  is not None else 0,
+                "qty_received":     qty_received if qty_received is not None else 0,
+                "qty_open":         qty_open     if qty_open     is not None else 0,
+                "unit_price":       unit_price,
+                "unit_cost":        unit_price,          # backward compat — existing DB column
+                "amount_remaining": amount_remaining,
+                "open_amount":      amount_remaining,    # backward compat — existing DB column
+            }
+            db_rows.append(row)
+            print(f"    + {row['po_number']}  {row['sku']:<14}  qty={row['qty_ordered']}  "
+                  f"rcvd={row['qty_received']}  open={row['qty_open']}  "
+                  f"unit=${row['unit_price'] or 0:.2f}  remaining=${row['amount_remaining'] or 0:,.2f}"
+                  f"  [{row['status']}]")
 
-        # ── PO number row ──
-        elif _PO_RE.match(col0):
-            current_po = col0.upper()
-
-        # ── Date header row or other non-data row ──
-        elif col0 not in _SKIP_COL0:
-            current_date = col0
+        # ── anything else (section headers, etc.) ── ignore
+        # e.g. "Purchase Orders"
 
     if skipped:
-        print(f"  Skipped {len(skipped)} line(s):")
+        print(f"  Skipped {len(skipped)} row(s):")
         for s in skipped:
             print(s)
     print(f"  Parsed {len(db_rows)} valid line item(s)")
-
     return db_rows
 
 
@@ -652,22 +685,32 @@ def main():
     print(f"  {len(valid_open_po)} rows ready to insert")
     # Full refresh: delete ALL existing rows first, then insert current file data
     supabase.table("open_pos").delete().neq("sku", "").execute()
+    _NEW_OPEN_PO_COLS = {
+        "qty_received":     "integer DEFAULT 0",
+        "qty_open":         "integer DEFAULT 0",
+        "unit_price":       "numeric",
+        "unit_cost":        "numeric",
+        "amount_remaining": "numeric",
+        "qty_ordered":      "integer DEFAULT 0",
+    }
     if valid_open_po:
         try:
             upsert("open_pos", valid_open_po)
         except Exception as e:
             msg = str(e)
-            missing = [c for c in ("qty_ordered", "unit_cost") if c in msg]
-            if missing:
-                for col in missing:
-                    dtype = "int DEFAULT 0" if col == "qty_ordered" else "numeric"
-                    print(f"  {col} column missing — run in Supabase SQL Editor:")
+            # Any "column not found" error means the new columns haven't been added yet.
+            # Strip ALL new columns and retry with only the pre-existing schema.
+            if "column" in msg.lower() and ("not found" in msg.lower() or "PGRST204" in msg):
+                new_cols = list(_NEW_OPEN_PO_COLS.keys())
+                print("  New columns not yet in open_pos schema. Add them with:")
+                for col, dtype in _NEW_OPEN_PO_COLS.items():
                     print(f"    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS {col} {dtype};")
-                rows_slim = [{k: v for k, v in r.items() if k not in missing} for r in valid_open_po]
+                rows_slim = [{k: v for k, v in r.items() if k not in new_cols} for r in valid_open_po]
                 upsert("open_pos", rows_slim)
+                print("  Inserted with existing columns only (unit_cost, open_amount).")
             else:
                 print(f"  open_pos failed: {e}")
-                print("  Ensure the open_pos table exists -- run the SQL in supabase_schema.sql")
+                print("  Ensure the open_pos table exists — run the SQL in supabase_schema.sql")
 
     print("\nDone.")
 
