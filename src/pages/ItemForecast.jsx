@@ -148,6 +148,8 @@ async function fetchItem(sku) {
     supabase.from('open_pos').select('po_number, po_date, vendor, status, sku, qty_ordered, qty_received, qty_open, unit_price, amount_remaining')
       .eq('sku', sku),
   ]);
+  console.log('open_pos for SKU', sku, ':', openPosRes.data, openPosRes.error);
+
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
     if (r.error) throw new Error(r.error.message);
   }

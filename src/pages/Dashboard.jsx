@@ -32,6 +32,8 @@ async function fetchDashboardData() {
     excludeSkus(supabase.from('monthly_sales').select('sku, month').gt('qty_sold', 0).order('month', { ascending: false })),
   ]);
 
+  console.log('open_pos query result:', poRes.data, poRes.error);
+
   for (const r of [skusRes, valRes, snapshotRes, forecastRes, poRes]) {
     if (r.error) throw new Error(r.error.message);
   }
