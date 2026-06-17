@@ -145,7 +145,7 @@ async function fetchItem(sku) {
     supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status, created_at')
       .eq('sku', sku).order('created_at', { ascending: false }),
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
-    supabase.from('open_pos').select('po_number, vendor, qty_ordered, unit_cost, status, date')
+    supabase.from('open_pos').select('po_number, vendor, qty_ordered, unit_cost, open_amount, status, date')
       .eq('sku', sku),
   ]);
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
@@ -776,7 +776,9 @@ export function ItemForecast() {
                     <td className="px-4 py-2.5 font-mono text-white">
                       {po.unit_cost && po.qty_ordered
                         ? formatCurrency((po.qty_ordered ?? 0) * (po.unit_cost ?? 0))
-                        : <span className="text-muted">—</span>}
+                        : po.open_amount > 0
+                          ? formatCurrency(po.open_amount)
+                          : <span className="text-muted">—</span>}
                     </td>
                   </tr>
                 ))}

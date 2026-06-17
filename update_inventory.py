@@ -294,23 +294,32 @@ def read_po_history() -> list:
 OPEN_PO_SKIP = {"closed", "rejected by supervisor", "nan", "none", ""}
 
 
+import re as _re
+_PO_RE = _re.compile(r'^PO\d+$', _re.IGNORECASE)
+
+
 def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
     """Build a single open_pos DB row, or None if status/sku should be excluded."""
     if not is_valid_sku(sku):
         return None
-    if not po_number or str(po_number).strip().lower() in ("nan", "none", ""):
+    # Reject total/subtotal rows that leak into the sku field
+    if "total" in str(sku).lower():
+        return None
+    po_str = str(po_number).strip() if po_number else ""
+    if not _PO_RE.match(po_str):
         return None
     if not status or str(status).strip().lower() in OPEN_PO_SKIP:
         return None
     qty = safe_int(qty) or 0
-    cost = safe_float(cost) or 0.0
+    unit_cost = safe_float(cost) or 0.0
     return {
         "sku":         sku.strip(),
-        "po_number":   str(po_number).strip(),
+        "po_number":   po_str.upper(),
         "vendor":      vendor.strip() if vendor else None,
         "status":      str(status).strip(),
         "qty_ordered": qty,
-        "open_amount": round(qty * cost, 2),
+        "unit_cost":   unit_cost if unit_cost else None,
+        "open_amount": round(qty * unit_cost, 2),
         "date":        str(date).strip() if date and str(date).strip() not in ("nan", "None", "") else None,
     }
 
@@ -592,10 +601,13 @@ def main():
             upsert("open_pos", valid_open_po)
         except Exception as e:
             msg = str(e)
-            if "qty_ordered" in msg:
-                print("  qty_ordered column missing; run:")
-                print("    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS qty_ordered int DEFAULT 0;")
-                rows_slim = [{k: v for k, v in r.items() if k != "qty_ordered"} for r in valid_open_po]
+            missing = [c for c in ("qty_ordered", "unit_cost") if c in msg]
+            if missing:
+                for col in missing:
+                    dtype = "int DEFAULT 0" if col == "qty_ordered" else "numeric"
+                    print(f"  {col} column missing — run in Supabase SQL Editor:")
+                    print(f"    ALTER TABLE open_pos ADD COLUMN IF NOT EXISTS {col} {dtype};")
+                rows_slim = [{k: v for k, v in r.items() if k not in missing} for r in valid_open_po]
                 upsert("open_pos", rows_slim)
             else:
                 print(f"  open_pos failed: {e}")
