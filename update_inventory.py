@@ -291,18 +291,27 @@ def read_po_history() -> list:
     return db_rows
 
 
-OPEN_PO_SKIP = {"closed", "rejected by supervisor", "nan", "none", ""}
-
-
 import re as _re
 _PO_RE = _re.compile(r'^PO\d+$', _re.IGNORECASE)
 
+OPEN_PO_SKIP = {"closed", "rejected by supervisor", "nan", "none", ""}
+
+# Statuses accepted for open_pos rows
+VALID_OPEN_PO_STATUSES = {
+    "Pending Receipt",
+    "Partially Received",
+    "Pending Bill",
+    "Pending Billing/Partially Received",
+}
+
+# Non-data rows whose col0 text we skip outright
+_SKIP_COL0 = {"Purchase Orders", "Open Inventory Purchase Orders", ""}
+
 
 def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
-    """Build a single open_pos DB row, or None if status/sku should be excluded."""
+    """Build a single open_pos DB row for Bryant's/xlsx fallback parsers."""
     if not is_valid_sku(sku):
         return None
-    # Reject total/subtotal rows that leak into the sku field
     if "total" in str(sku).lower():
         return None
     po_str = str(po_number).strip() if po_number else ""
@@ -310,16 +319,16 @@ def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
         return None
     if not status or str(status).strip().lower() in OPEN_PO_SKIP:
         return None
-    qty = safe_int(qty) or 0
+    qty_val = safe_int(qty) or 0
     unit_cost = safe_float(cost) or 0.0
     return {
         "sku":         sku.strip(),
         "po_number":   po_str.upper(),
         "vendor":      vendor.strip() if vendor else None,
         "status":      str(status).strip(),
-        "qty_ordered": qty,
+        "qty_ordered": qty_val,
         "unit_cost":   unit_cost if unit_cost else None,
-        "open_amount": round(qty * unit_cost, 2),
+        "open_amount": round(qty_val * unit_cost, 2),
         "date":        str(date).strip() if date and str(date).strip() not in ("nan", "None", "") else None,
     }
 
@@ -327,48 +336,95 @@ def _build_open_po_row(sku, vendor, po_number, status, qty, cost, date=None):
 def read_open_pos_xls_inventory():
     """Parse OpenInventoryPurchaseOrders*.xls (NetSuite grouped layout).
 
-    Rows are grouped: date row → PO number row → blank-col-0 line item rows.
-    Col layout: 0=blank, 1=Vendor, 2=Status, 3=PO Total, 4=Display Name,
-    5=Item Type, 6=SKU, 7=Requestor, 8=Quantity, 9=Qty Received,
-    10=Qty Billed, 11=Qty Open, 12=Unit Price, 13=$ Remaining
-    Returns list of rows, or None if file not found.
+    File structure confirmed from raw dump:
+      Rows 0-6  : header/title rows — skipped
+      Row  7    : 'Purchase Orders' category row — skipped
+      Date rows : col[0] = date string (e.g. '1/22/2025'), rest empty
+      PO rows   : col[0] = 'PO2297' etc., rest empty
+      Line items: col[0] = '', col[1]=Vendor, col[2]=Status, col[3]=POTotal,
+                  col[4]=DisplayName, col[5]=ItemType, col[6]=SKU(FullName),
+                  col[7]=Requestor, col[8]=Qty, col[9]=QtyRecvd,
+                  col[10]=QtyBilled, col[11]=QtyOpen, col[12]=UnitPrice,
+                  col[13]=$Remaining
+      Total rows: col[0] starts with 'Total' — always skipped
+
+    Returns list of DB-ready dicts, or None if file not found.
     """
     path = find_file("OpenInventoryPurchaseOrders*.xls")
     if not path:
         return None
 
     print(f"  {os.path.basename(path)}")
-    rows = parse_xls_xml(path)
+    raw = parse_xls_xml(path)
 
     db_rows = []
     current_po = None
     current_date = None
+    skipped = []
 
-    for r in rows[7:]:  # skip title/header/category rows
+    for r in raw[7:]:
         if not r:
             continue
-        col0 = str(r[0]).strip()
+        col0 = str(r[0]).strip() if r[0] else ""
+
+        # ── Total / subtotal rows ── always skip
+        if "total" in col0.lower():
+            continue
+
+        # ── Line item row (col0 is blank) ──
         if not col0:
-            # Line item row
             if not current_po or len(r) < 13:
                 continue
-            row = _build_open_po_row(
-                sku=r[6] if len(r) > 6 else "",
-                vendor=r[1] if len(r) > 1 else None,
-                po_number=current_po,
-                status=r[2] if len(r) > 2 else None,
-                qty=r[8] if len(r) > 8 else None,
-                cost=r[12] if len(r) > 12 else None,
-                date=current_date,
-            )
-            if row:
-                db_rows.append(row)
-        elif col0.startswith("Total"):
-            pass  # summary rows
-        elif col0.upper().startswith("PO") and col0[2:].strip().isdigit():
-            current_po = col0
-        elif r[0] and str(r[0]).strip() not in ("", "Purchase Orders", "Open Inventory Purchase Orders"):
-            current_date = col0  # date header row
+
+            sku    = str(r[6]).strip() if len(r) > 6 and r[6] else ""
+            vendor = str(r[1]).strip() if len(r) > 1 and r[1] else ""
+            status = str(r[2]).strip() if len(r) > 2 and r[2] else ""
+            qty    = safe_int(r[8])    if len(r) > 8  else None
+            cost   = safe_float(r[12]) if len(r) > 12 else None
+
+            # Reject if any field contains "total"
+            if any("total" in str(f).lower() for f in [current_po, sku, vendor, status]):
+                skipped.append(f"  SKIP (contains 'total'): po={current_po} sku={sku}")
+                continue
+            # PO number must be ^PO\d+$
+            if not _PO_RE.match(current_po):
+                skipped.append(f"  SKIP (bad PO format): {current_po}")
+                continue
+            # SKU must be a valid item identifier
+            if not sku or not is_valid_sku(sku):
+                skipped.append(f"  SKIP (invalid SKU): '{sku}'")
+                continue
+            # Status must be in the allowed set
+            if status not in VALID_OPEN_PO_STATUSES:
+                skipped.append(f"  SKIP (status '{status}'): po={current_po} sku={sku}")
+                continue
+
+            unit_cost = cost if cost else None
+            qty_val   = qty  if qty  is not None else 0
+            db_rows.append({
+                "sku":         sku,
+                "po_number":   current_po.upper(),
+                "vendor":      vendor or None,
+                "status":      status,
+                "qty_ordered": qty_val,
+                "unit_cost":   unit_cost,
+                "open_amount": round(qty_val * (unit_cost or 0), 2),
+                "date":        current_date,
+            })
+
+        # ── PO number row ──
+        elif _PO_RE.match(col0):
+            current_po = col0.upper()
+
+        # ── Date header row or other non-data row ──
+        elif col0 not in _SKIP_COL0:
+            current_date = col0
+
+    if skipped:
+        print(f"  Skipped {len(skipped)} line(s):")
+        for s in skipped:
+            print(s)
+    print(f"  Parsed {len(db_rows)} valid line item(s)")
 
     return db_rows
 
