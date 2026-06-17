@@ -282,9 +282,7 @@ export function ItemForecast() {
   const snap = data?.snap ?? {};
   const onHand = snap.on_hand_total ?? 0;
   const onOrder = computed?.onOrderEffective ?? snap.on_order ?? 0;
-  const openPOs = (data?.pos ?? []).filter(po =>
-    po.status?.includes('Pending') || po.status?.includes('Receipt')
-  );
+  const openPOs = data?.openPos ?? [];
 
   // KPI card definitions
   const kpis = [
@@ -432,7 +430,7 @@ export function ItemForecast() {
           <table className="w-full text-xs">
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
-                {['PO Number', 'Vendor', 'Qty Ordered', 'Status'].map(h => (
+                {['PO Number', 'Date', 'Vendor', 'Qty Open', 'Status'].map(h => (
                   <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -446,10 +444,11 @@ export function ItemForecast() {
                   style={{ borderBottom: i < openPOs.length - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
                 >
                   <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number ?? '—'}</td>
+                  <td className="px-4 py-2.5 font-mono text-muted">{po.po_date ?? '—'}</td>
                   <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>
                     {po.vendor ?? '—'}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-white">{(po.qty_ordered ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 font-mono text-white">{(po.qty_open ?? 0).toLocaleString()}</td>
                   <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
                 </tr>
               ))}
