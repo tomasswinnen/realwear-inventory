@@ -408,35 +408,28 @@ def read_open_pos_xls_inventory():
                 skipped.append(f"  SKIP (too few cols {len(r)}): po={current_po}")
                 continue
 
-            sku              = str(r[6]).strip()  if len(r) > 6  and r[6]  else ""
-            vendor           = str(r[1]).strip()  if r[1]                  else ""
-            status           = str(r[2]).strip()  if len(r) > 2  and r[2]  else ""
-            qty_ordered      = safe_int(r[8])     if len(r) > 8            else None
-            qty_received     = safe_int(r[9])     if len(r) > 9            else None
-            qty_open         = safe_int(r[11])    if len(r) > 11           else None
-            unit_price       = safe_float(r[12])  if len(r) > 12           else None
-            amount_remaining = safe_float(r[13])  if len(r) > 13           else None
+            sku              = str(r[6]).strip()          if len(r) > 6  and r[6]  else ""
+            vendor           = str(r[1]).strip()          if r[1]                  else ""
+            status           = str(r[2]).strip()          if len(r) > 2  and r[2]  else ""
+            qty_ordered_f    = safe_float(r[8])  or 0.0  if len(r) > 8            else 0.0
+            qty_received_f   = safe_float(r[9])  or 0.0  if len(r) > 9            else 0.0
+            qty_open_f       = safe_float(r[11]) or 0.0  if len(r) > 11           else 0.0
+            unit_price       = safe_float(r[12])          if len(r) > 12           else None
+            amount_remaining = safe_float(r[13])          if len(r) > 13           else None
 
             # PO number must be ^PO\d+$
             if not _PO_RE.match(current_po):
                 skipped.append(f"  SKIP (bad PO): {current_po} sku={sku}")
                 continue
 
-            # SKU must be non-empty, is_valid_sku, and must start with a digit
-            # (filters out supplier-side codes like GOE-0010-V*, Optic Mod UO-1)
+            # SKU must be non-empty
             if not sku:
                 skipped.append(f"  SKIP (empty SKU): po={current_po}")
                 continue
-            if not is_valid_sku(sku):
-                skipped.append(f"  SKIP (invalid SKU): '{sku}' po={current_po}")
-                continue
-            if not sku[0].isdigit():
-                skipped.append(f"  SKIP (non-accessory SKU): '{sku}' po={current_po}")
-                continue
 
-            # Status must be in the allowed set
-            if not is_valid_open_po_status(status):
-                skipped.append(f"  SKIP (status='{status}'): '{sku}' po={current_po}")
+            # Only keep rows that still have open quantity
+            if qty_open_f <= 0:
+                skipped.append(f"  SKIP (qty_open={qty_open_f}): '{sku}' po={current_po}")
                 continue
 
             row = {
@@ -445,9 +438,9 @@ def read_open_pos_xls_inventory():
                 "vendor":           vendor or None,
                 "status":           status,
                 "date":             current_date,
-                "qty_ordered":      qty_ordered  if qty_ordered  is not None else 0,
-                "qty_received":     qty_received if qty_received is not None else 0,
-                "qty_open":         qty_open     if qty_open     is not None else 0,
+                "qty_ordered":      int(round(qty_ordered_f)),
+                "qty_received":     int(round(qty_received_f)),
+                "qty_open":         int(round(qty_open_f)),
                 "unit_price":       unit_price,
                 "unit_cost":        unit_price,          # backward compat — existing DB column
                 "amount_remaining": amount_remaining,
@@ -686,10 +679,7 @@ def main():
     upsert("po_history", po_rows)
 
     print("\n>> open_pos")
-    valid_open_po = [r for r in open_po_rows if r["sku"] in all_skus]
-    skipped = len(open_po_rows) - len(valid_open_po)
-    if skipped:
-        print(f"  ({skipped} rows skipped — SKU not in skus table)")
+    valid_open_po = open_po_rows  # qty_open > 0 already enforced in parser
     print(f"  {len(valid_open_po)} rows ready to insert")
     # Full refresh: delete ALL existing rows first, then insert current file data
     supabase.table("open_pos").delete().neq("sku", "").execute()
