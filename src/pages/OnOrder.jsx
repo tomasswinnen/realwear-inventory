@@ -10,23 +10,33 @@ import { formatCurrency, isValidSku } from '../utils/coverage';
 
 // Statuses that count as "on order" (not yet fully received)
 const ACTIVE_STATUSES = new Set([
-  'Open', 'Pending', 'Partial',
+  'Open', 'Pending', 'Partial', 'Pending Receipt',
   'Partially Received', 'Pending Bill',
   'Pending Billing/Partially Received',
+  'Approved By Supervisor/Pending Receipt',
 ]);
 
+function isActiveStatus(status) {
+  const value = status?.trim();
+  if (!value) return false;
+  if (ACTIVE_STATUSES.has(value)) return true;
+  const lower = value.toLowerCase();
+  return lower.includes('pending') || lower.includes('partial') || lower.includes('receipt') || lower.includes('open');
+}
+
 async function fetchOnOrderData() {
-  const [skusRes, snapshotRes, poRes] = await Promise.all([
+  const [skusRes, snapshotRes, poRes, openPosRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, unit_cost, lead_time_days')),
     excludeSkus(supabase.from('inventory_snapshot')
       .select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at')
       .order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('po_history').select('*').order('created_at', { ascending: false })),
+    excludeSkus(supabase.from('open_pos').select('*').order('po_date', { ascending: false })),
   ]);
-  for (const r of [skusRes, snapshotRes, poRes]) {
+  for (const r of [skusRes, snapshotRes, poRes, openPosRes]) {
     if (r.error) throw new Error(r.error.message);
   }
-  return { skus: skusRes.data, snapshot: snapshotRes.data, pos: poRes.data };
+  return { skus: skusRes.data, snapshot: snapshotRes.data, pos: poRes.data, openPos: openPosRes.data };
 }
 
 export function OnOrder() {
@@ -45,17 +55,44 @@ export function OnOrder() {
       if (!latestSnap[s.sku]) latestSnap[s.sku] = s;
     }
 
-    const validPos = data.pos.filter(p => isValidSku(p.sku));
+    const historyPos = (data.pos ?? []).map(po => ({
+      ...po,
+      source: 'history',
+    }));
+    const openPos = (data.openPos ?? []).map(po => ({
+      ...po,
+      source: 'open',
+    }));
+
+    const mergedByKey = new Map();
+    for (const po of [...historyPos, ...openPos]) {
+      if (!isValidSku(po.sku)) continue;
+      const key = `${po.sku}::${po.po_number}`;
+      const existing = mergedByKey.get(key);
+      if (!existing || po.source === 'open') {
+        mergedByKey.set(key, {
+          ...existing,
+          ...po,
+          status: po.status ?? existing?.status,
+          qty_ordered: po.qty_ordered ?? existing?.qty_ordered ?? 0,
+          unit_cost: po.unit_cost ?? po.unit_price ?? existing?.unit_cost ?? existing?.unit_price,
+          qty_open: po.qty_open ?? existing?.qty_open,
+          amount_remaining: po.amount_remaining ?? existing?.amount_remaining,
+        });
+      }
+    }
+
+    const validPos = [...mergedByKey.values()];
 
     // All unique statuses present in the data
-    const allStatuses = [...new Set(validPos.map(p => p.status))].sort();
+    const allStatuses = [...new Set(validPos.map(p => p.status).filter(Boolean))].sort();
 
-    // Build rows from po_history, joining sku + snapshot info
+    // Build rows from merged po_history + open_pos, joining sku + snapshot info
     const rows = validPos
       .filter(po => {
         const matchStatus =
           statusFilter === 'all' ||
-          (statusFilter === 'active' && ACTIVE_STATUSES.has(po.status)) ||
+          (statusFilter === 'active' && isActiveStatus(po.status)) ||
           statusFilter === po.status;
         const matchSearch = !search ||
           po.sku.toLowerCase().includes(search.toLowerCase()) ||
@@ -79,12 +116,12 @@ export function OnOrder() {
           onHand: snap.on_hand_total ?? 0,
           onHandPortland: snap.on_hand_portland ?? 0,
           onHandHk: snap.on_hand_hk ?? 0,
-          isActive: ACTIVE_STATUSES.has(po.status),
+          isActive: isActiveStatus(po.status),
         };
       });
 
     // KPIs over active POs only (regardless of current filter)
-    const activePOs = validPos.filter(p => ACTIVE_STATUSES.has(p.status));
+    const activePOs = validPos.filter(p => isActiveStatus(p.status));
     const activeSkus = new Set(activePOs.map(p => p.sku));
     const totalUnits = activePOs.reduce((s, p) => s + (p.qty_ordered ?? 0), 0);
     const totalValue = activePOs.reduce((s, p) => {

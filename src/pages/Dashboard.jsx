@@ -123,7 +123,7 @@ function ProjectedCoverageCell({ months, monthsWithOrder, onOrder }) {
 export function Dashboard() {
   const { data, loading, error, refetch } = useQuery(fetchDashboardData, []);
 
-  const { kpis, urgentItems, chartData, totalValue, notesBySku, openPOs, dormantItems } = useMemo(() => {
+  const { kpis, urgentItems, chartData, totalValue, openPOValue, notesBySku, openPOs, dormantItems } = useMemo(() => {
     if (!data) return {};
 
     const onOrderBySku = {};
@@ -141,6 +141,7 @@ export function Dashboard() {
       if (!latestValBySku[v.sku]) latestValBySku[v.sku] = v;
     }
     const totalValue = Object.values(latestValBySku).reduce((s, v) => s + (v.inv_value ?? 0), 0);
+    const openPOValue = (data.openPOs ?? []).reduce((s, po) => s + (po.amount_remaining ?? 0), 0);
 
     const chartData = coverage
       .filter(s => isFinite(s.months))
@@ -175,6 +176,7 @@ export function Dashboard() {
       urgentItems: needsReorder.sort((a, b) => a.months - b.months),
       chartData,
       totalValue,
+      openPOValue,
       notesBySku,
       openPOs,
       dormantItems,
@@ -191,7 +193,7 @@ export function Dashboard() {
       </div>
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => <KPISkeleton key={i} />)
         ) : (
@@ -219,6 +221,12 @@ export function Dashboard() {
               value={formatCurrency(totalValue)}
               sub="on hand"
               color="text-success"
+            />
+            <KPICard
+              label="Open PO Value"
+              value={formatCurrency(openPOValue)}
+              sub="outstanding"
+              color="text-accent"
             />
           </>
         )}

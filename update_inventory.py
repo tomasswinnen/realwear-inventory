@@ -2,11 +2,12 @@
 update_inventory.py — load RealWear inventory from NetSuite XML .xls export files.
 
 Expects these files in the given directory (default: current dir):
-  ItemQuantitySoldperMonthResults*.xls   -> monthly_sales
-  CustomCurrentInventorySnapshot*.xls   -> inventory_snapshot  +  skus (supplier)
-  InventoryValuationSummary*.xls         -> inventory_valuation +  skus (desc, cost)
-  PurchaseOrderHistory*.xls              -> po_history
-  Bryant_sOpenPurchaseOrders*.xls        -> open_pos
+  ItemQuantitySoldperMonthResults*.xls           -> monthly_sales
+  CustomCurrentInventorySnapshot*.xls           -> inventory_snapshot  +  skus (supplier)
+  InventoryValuationSummary*.xls                 -> inventory_valuation +  skus (desc, cost)
+  PurchaseOrderHistory*.xls                      -> po_history
+  Bryant_sOpenPurchaseOrders*.xls                -> open_pos
+  NetSuite_Transfer_Orders_Abiertas*.xls         -> open_transfer_orders
 
 Usage:
     python update_inventory.py "C:\\Users\\swinn\\Desktop\\Accessory Invt Mngt"
@@ -472,6 +473,193 @@ def read_open_pos_xlsx():
     return db_rows
 
 
+def read_transfer_orders(path: str) -> list[dict]:
+    rows = parse_xls_xml(path)
+    if not rows:
+        return []
+
+    header_idx = None
+    header_map = {}
+    for i, row in enumerate(rows):
+        normalized = [str(cell or "").strip().lower().replace(" ", "_") for cell in row]
+        if any("sku" in cell for cell in normalized) and any("transfer" in cell for cell in normalized):
+            header_idx = i
+            for j, cell in enumerate(normalized):
+                if "sku" in cell:
+                    header_map["sku"] = j
+                elif "transfer" in cell and "order" in cell:
+                    header_map["transfer_order_number"] = j
+                elif cell in ("item", "item_number") and "sku" not in cell:
+                    header_map["sku"] = j
+                elif "vendor" in cell:
+                    header_map["vendor"] = j
+                elif "status" in cell:
+                    header_map["status"] = j
+                elif "qty_open" in cell or ("open" in cell and "qty" in cell):
+                    header_map["qty_open"] = j
+                elif "qty_ordered" in cell or ("ordered" in cell and "qty" in cell):
+                    header_map["qty_ordered"] = j
+                elif "qty_received" in cell or ("received" in cell and "qty" in cell):
+                    header_map["qty_received"] = j
+                elif "unit" in cell and ("price" in cell or "cost" in cell):
+                    header_map["unit_price"] = j
+                elif "amount" in cell and ("remaining" in cell or "remaining_amount" in cell):
+                    header_map["amount_remaining"] = j
+                elif cell in ("date", "transfer_date", "po_date"):
+                    header_map["transfer_date"] = j
+            break
+
+    if header_idx is None:
+        return []
+
+    db_rows = []
+    for row in rows[header_idx + 1:]:
+        sku = str(row[header_map.get("sku", -1)]).strip() if header_map.get("sku") is not None and len(row) > header_map["sku"] else ""
+        if not is_valid_sku(sku):
+            continue
+        transfer_order_number = str(row[header_map.get("transfer_order_number", -1)]).strip() if header_map.get("transfer_order_number") is not None and len(row) > header_map["transfer_order_number"] else None
+        if not transfer_order_number:
+            continue
+        vendor = str(row[header_map.get("vendor", -1)]).strip() if header_map.get("vendor") is not None and len(row) > header_map["vendor"] else None
+        status = str(row[header_map.get("status", -1)]).strip() if header_map.get("status") is not None and len(row) > header_map["status"] else None
+        qty_ordered = safe_int(row[header_map.get("qty_ordered", -1)]) if header_map.get("qty_ordered") is not None and len(row) > header_map["qty_ordered"] else 0
+        qty_open = safe_int(row[header_map.get("qty_open", -1)]) if header_map.get("qty_open") is not None and len(row) > header_map["qty_open"] else 0
+        unit_price = safe_float(row[header_map.get("unit_price", -1)]) if header_map.get("unit_price") is not None and len(row) > header_map["unit_price"] else None
+        amount_remaining = safe_float(row[header_map.get("amount_remaining", -1)]) if header_map.get("amount_remaining") is not None and len(row) > header_map["amount_remaining"] else None
+        transfer_date = str(row[header_map.get("transfer_date", -1)]).strip() if header_map.get("transfer_date") is not None and len(row) > header_map["transfer_date"] else None
+
+        db_rows.append({
+            "sku": sku,
+            "transfer_order_number": transfer_order_number,
+            "vendor": vendor,
+            "status": status,
+            "qty_ordered": qty_ordered or 0,
+            "qty_open": qty_open or 0,
+            "unit_price": unit_price or 0.0,
+            "amount_remaining": amount_remaining or 0.0,
+            "transfer_date": transfer_date or None,
+        })
+    return db_rows
+
+
+def read_transfer_orders_file() -> list[dict]:
+    path = find_file("NetSuite_Transfer_Orders_Abiertas*.xls")
+    if path:
+        print(f"  {os.path.basename(path)}")
+        return read_transfer_orders(path)
+    path = find_file("NetSuite_Transfer_Orders_Abiertas*.xlsx")
+    if path:
+        print(f"  {os.path.basename(path)}")
+        return read_transfer_orders_xlsx()
+    print("  NetSuite_Transfer_Orders_Abiertas file not found -- skipping transfer orders")
+    return []
+
+
+def read_transfer_orders_xlsx() -> list[dict]:
+    import openpyxl
+    matches = [m for m in glob.glob(os.path.join(SEARCH_DIR, "NetSuite_Transfer_Orders_Abiertas*.xlsx"))
+               if not os.path.basename(m).startswith("~$")]
+    if not matches:
+        return []
+
+    path = max(matches, key=os.path.getmtime)
+    print(f"  {os.path.basename(path)} [Transfer Orders XLSX]")
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    rows = list(wb.active.iter_rows(values_only=True))
+    wb.close()
+
+    header_idx = None
+    header_map = {}
+    for i, row in enumerate(rows):
+        normalized = [str(cell or "").strip().lower().replace(" ", "_") for cell in row]
+        if any("sku" in cell for cell in normalized) and any("transfer" in cell for cell in normalized):
+            header_idx = i
+            for j, cell in enumerate(normalized):
+                if "sku" in cell:
+                    header_map["sku"] = j
+                elif "transfer" in cell and "order" in cell:
+                    header_map["transfer_order_number"] = j
+                elif cell in ("item", "item_number") and "sku" not in cell:
+                    header_map["sku"] = j
+                elif "vendor" in cell:
+                    header_map["vendor"] = j
+                elif "status" in cell:
+                    header_map["status"] = j
+                elif "qty_open" in cell or ("open" in cell and "qty" in cell):
+                    header_map["qty_open"] = j
+                elif "qty_ordered" in cell or ("ordered" in cell and "qty" in cell):
+                    header_map["qty_ordered"] = j
+                elif "qty_received" in cell or ("received" in cell and "qty" in cell):
+                    header_map["qty_received"] = j
+                elif "unit" in cell and ("price" in cell or "cost" in cell):
+                    header_map["unit_price"] = j
+                elif "amount" in cell and ("remaining" in cell or "remaining_amount" in cell):
+                    header_map["amount_remaining"] = j
+                elif cell in ("date", "transfer_date", "po_date"):
+                    header_map["transfer_date"] = j
+            break
+
+    if header_idx is None:
+        return []
+
+    db_rows = []
+    for row in rows[header_idx + 1:]:
+        sku = str(row[header_map.get("sku", -1)]).strip() if header_map.get("sku") is not None and len(row) > header_map["sku"] else ""
+        if not is_valid_sku(sku):
+            continue
+        transfer_order_number = str(row[header_map.get("transfer_order_number", -1)]).strip() if header_map.get("transfer_order_number") is not None and len(row) > header_map["transfer_order_number"] else None
+        if not transfer_order_number:
+            continue
+        vendor = str(row[header_map.get("vendor", -1)]).strip() if header_map.get("vendor") is not None and len(row) > header_map["vendor"] else None
+        status = str(row[header_map.get("status", -1)]).strip() if header_map.get("status") is not None and len(row) > header_map["status"] else None
+        qty_ordered = safe_int(row[header_map.get("qty_ordered", -1)]) if header_map.get("qty_ordered") is not None and len(row) > header_map["qty_ordered"] else 0
+        qty_open = safe_int(row[header_map.get("qty_open", -1)]) if header_map.get("qty_open") is not None and len(row) > header_map["qty_open"] else 0
+        unit_price = safe_float(row[header_map.get("unit_price", -1)]) if header_map.get("unit_price") is not None and len(row) > header_map["unit_price"] else None
+        amount_remaining = safe_float(row[header_map.get("amount_remaining", -1)]) if header_map.get("amount_remaining") is not None and len(row) > header_map["amount_remaining"] else None
+        transfer_date = str(row[header_map.get("transfer_date", -1)]).strip() if header_map.get("transfer_date") is not None and len(row) > header_map["transfer_date"] else None
+
+        db_rows.append({
+            "sku": sku,
+            "transfer_order_number": transfer_order_number,
+            "vendor": vendor,
+            "status": status,
+            "qty_ordered": qty_ordered or 0,
+            "qty_open": qty_open or 0,
+            "unit_price": unit_price or 0.0,
+            "amount_remaining": amount_remaining or 0.0,
+            "transfer_date": transfer_date or None,
+        })
+    return db_rows
+
+
+def parse_and_upsert_transfer_orders(supabase, folder):
+    xls_files = [f for f in os.listdir(folder) if f.lower().startswith('netsuite_transfer_orders_abiertas') and f.lower().endswith('.xls')]
+    xlsx_files = [f for f in os.listdir(folder) if f.lower().startswith('netsuite_transfer_orders_abiertas') and f.lower().endswith('.xlsx')]
+    if not xls_files and not xlsx_files:
+        print("No NetSuite_Transfer_Orders_Abiertas file found"); return 0
+
+    if xls_files:
+        newest = max(xls_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+        path = os.path.join(folder, newest)
+        print(f"Parsing: {newest}")
+        results = read_transfer_orders(path)
+    else:
+        newest = max(xlsx_files, key=lambda f: os.path.getmtime(os.path.join(folder, f)))
+        path = os.path.join(folder, newest)
+        print(f"Parsing: {newest}")
+        results = read_transfer_orders_xlsx()
+
+    if not results:
+        print("  no transfer orders parsed")
+        return 0
+
+    supabase.table('open_transfer_orders').delete().neq('transfer_order_number', '').execute()
+    if results:
+        supabase.table('open_transfer_orders').insert(results).execute()
+    print(f"Inserted {len(results)} open transfer order lines")
+    return len(results)
+
+
 # ── Demand forecast ───────────────────────────────────────────────────────────
 
 def build_demand_forecast(sales_rows: list) -> list:
@@ -557,6 +745,9 @@ def main():
     print("Reading PO history...")
     po_rows = read_po_history()
 
+    print("Reading transfer orders...")
+    transfer_rows = read_transfer_orders_file()
+
     print("Reading open POs...")
 
     # Step 2: collect all SKUs that need a parent row in skus table
@@ -566,6 +757,7 @@ def main():
         | {r["sku"] for r in snap_rows}
         | {r["sku"] for r in sales_rows}
         | {r["sku"] for r in po_rows}
+        | {r["sku"] for r in transfer_rows}
     )
 
     # Step 3: upsert in FK-safe order
@@ -604,6 +796,10 @@ def main():
     print("\n>> open_pos")
     n = parse_and_upsert_open_pos(supabase, SEARCH_DIR)
     print(f"  open_pos: {n} rows")
+
+    print("\n>> open_transfer_orders")
+    m = parse_and_upsert_transfer_orders(supabase, SEARCH_DIR)
+    print(f"  open_transfer_orders: {m} rows")
 
     print("\nDone.")
 

@@ -64,7 +64,7 @@ SUPABASE_SERVICE_KEY=eyJ...   # service_role key — never expose to browser
 
 Run `supabase_schema.sql` once in the Supabase SQL editor to create all tables and RLS policies.
 
-Tables: `skus`, `inventory_snapshot`, `monthly_sales`, `inventory_valuation`, `po_history`, `open_pos`.
+Tables: `skus`, `inventory_snapshot`, `monthly_sales`, `inventory_valuation`, `po_history`, `open_pos`, `open_transfer_orders`.
 
 ## Updating Data
 
@@ -81,6 +81,7 @@ Download these reports from NetSuite and place them in the same folder:
 | Inventory Valuation Summary | `InventoryValuationSummary*.xls` |
 | Purchase Order History | `PurchaseOrderHistory*.xls` *(optional)* |
 | Bryant's Open Purchase Orders | `Bryant_sOpenPurchaseOrders*.xls` *(optional)* |
+| Transfer Orders Abiertas | `NetSuite_Transfer_Orders_Abiertas*.xls` *(optional)* |
 
 ### Step 2 — Run the pipeline
 

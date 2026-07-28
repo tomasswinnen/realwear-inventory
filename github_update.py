@@ -64,6 +64,7 @@ FILE_PATTERNS = {
     "valuation": ["inventoryvaluation", "inventorysummary"],
     "snapshot":  ["currentinventorysnapshot", "custominventorysnapshot"],
     "sales":     ["itemquantitysold", "itemqtysold"],
+    "transfer_orders": ["transferorders", "transfer_orders", "transferordersabiertas", "transfer_orders_abiertas"],
 }
 
 

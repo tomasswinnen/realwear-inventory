@@ -9,6 +9,7 @@ const NAV = [
   { to: '/item',        label: 'Item Forecast',  icon: '🔍' },
   { to: '/po-history',  label: 'PO History',     icon: '📋' },
   { to: '/on-order',    label: 'On Order',       icon: '📦' },
+  { to: '/open-transfer-orders', label: 'Open Transfer Orders', icon: '🔁' },
   { to: '/reorder',     label: 'Reorder Alerts', icon: '🔴' },
 ];
 

@@ -66,6 +66,20 @@ create table if not exists open_pos (
 );
 create index if not exists idx_open_pos_sku on open_pos(sku);
 
+create table if not exists open_transfer_orders (
+  sku                     text not null references skus(sku),
+  transfer_order_number   text not null,
+  vendor                  text,
+  status                  text,
+  qty_ordered             int     default 0,
+  qty_open                int     default 0,
+  unit_price              numeric default 0,
+  amount_remaining        numeric default 0,
+  transfer_date           date,
+  primary key (transfer_order_number, sku)
+);
+create index if not exists idx_open_transfer_orders_sku on open_transfer_orders(sku);
+
 create table if not exists demand_forecast (
   sku        text primary key references skus(sku),
   avg_3m     numeric default 0,
@@ -90,4 +104,5 @@ create policy "anon read monthly_sales" on monthly_sales for select using (true)
 create policy "anon read inventory_valuation" on inventory_valuation for select using (true);
 create policy "anon read po_history" on po_history for select using (true);
 create policy "anon read open_pos" on open_pos for select using (true);
+create policy "anon read open_transfer_orders" on open_transfer_orders for select using (true);
 create policy "anon read demand_forecast" on demand_forecast for select using (true);

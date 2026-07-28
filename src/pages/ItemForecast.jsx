@@ -38,11 +38,6 @@ function fmtDate(dateStr) {
 function addMonths(d, n) {
   return new Date(d.getFullYear(), d.getMonth() + n, 1);
 }
-function mean(arr) {
-  const valid = arr.filter(v => v != null && !isNaN(v));
-  if (!valid.length) return 0;
-  return valid.reduce((a, b) => a + b, 0) / valid.length;
-}
 function itemCoverageClass(months) {
   if (!isFinite(months) || months > 6) return 'text-success';
   if (months >= 3) return 'text-warning';
@@ -133,7 +128,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -147,8 +142,10 @@ async function fetchItem(sku) {
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
     supabase.from('open_pos').select('po_number, po_date, vendor, status, sku, qty_ordered, qty_received, qty_open, unit_price, amount_remaining')
       .eq('sku', sku),
+    supabase.from('open_transfer_orders').select('transfer_order_number, transfer_date, vendor, status, sku, qty_ordered, qty_open, unit_price, amount_remaining')
+      .eq('sku', sku),
   ]);
-  console.log('open_pos for SKU', sku, ':', openPosRes.data, openPosRes.error);
+  console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
 
   for (const r of [skuRes, snapRes, salesRes, valRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -162,6 +159,7 @@ async function fetchItem(sku) {
     pos: posRes.data ?? [],
     forecast: fcRes.data ?? null,
     openPos: openPosRes.data ?? [],
+    openTransferOrders: openTransferRes.data ?? [],
   };
 }
 
@@ -182,7 +180,10 @@ export function ItemForecast() {
     if (!sku && allSkus?.length) navigate(`/item/${allSkus[0].sku}`, { replace: true });
   }, [sku, allSkus, navigate]);
 
-  useEffect(() => { setQtyReceived({}); }, [sku]);
+  useEffect(() => {
+    const timeout = setTimeout(() => setQtyReceived({}), 0);
+    return () => clearTimeout(timeout);
+  }, [sku]);
 
   const computed = useMemo(() => {
     if (!data) return null;
@@ -282,7 +283,7 @@ export function ItemForecast() {
   const snap = data?.snap ?? {};
   const onHand = snap.on_hand_total ?? 0;
   const onOrder = computed?.onOrderEffective ?? snap.on_order ?? 0;
-  const openPOs = data?.openPos ?? [];
+  const openTransferOrders = data?.openTransferOrders ?? [];
 
   // KPI card definitions
   const kpis = [
@@ -419,41 +420,46 @@ export function ItemForecast() {
         </div>
       )}
 
-      {/* ── Open Purchase Orders ── */}
-      {sku && openPOs.length > 0 && (
-        <div className="rounded-xl overflow-hidden" style={{ background: '#0d1a27', border: '1px solid rgba(14,165,233,0.25)' }}>
-          <div className="px-5 py-3 border-b" style={{ borderColor: 'rgba(14,165,233,0.12)' }}>
-            <h3 className="text-xs font-sans font-semibold text-blue-400 uppercase tracking-widest">
-              Open Purchase Orders · {openPOs.length}
-            </h3>
+      {sku && openTransferOrders.length > 0 && (
+        <div className="space-y-3">
+          <div className="rounded-xl p-3 bg-yellow-500/10 border border-yellow-400/10 text-yellow-200 text-sm font-mono">
+            {openTransferOrders.length} Open Transfer Order{openTransferOrders.length === 1 ? '' : 's'} open for this SKU.
           </div>
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
-                {['PO Number', 'Date', 'Vendor', 'Qty Open', 'Status'].map(h => (
-                  <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {openPOs.map((po, i) => (
-                <tr
-                  key={po.po_number ?? i}
-                  style={{ borderBottom: i < openPOs.length - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
-                >
-                  <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number ?? '—'}</td>
-                  <td className="px-4 py-2.5 font-mono text-muted">{po.po_date ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>
-                    {po.vendor ?? '—'}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-white">{(po.qty_open ?? 0).toLocaleString()}</td>
-                  <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
+
+          <div className="rounded-xl overflow-hidden" style={{ background: '#0d1a27', border: '1px solid rgba(14,165,233,0.25)' }}>
+            <div className="px-5 py-3 border-b" style={{ borderColor: 'rgba(14,165,233,0.12)' }}>
+              <h3 className="text-xs font-sans font-semibold text-blue-400 uppercase tracking-widest">
+                Open Transfer Orders · {openTransferOrders.length}
+              </h3>
+            </div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
+                  {['Order', 'Date', 'Vendor', 'Qty Open', 'Status'].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {openTransferOrders.map((po, i) => (
+                  <tr
+                    key={po.transfer_order_number ?? i}
+                    style={{ borderBottom: i < openTransferOrders.length - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
+                  >
+                    <td className="px-4 py-2.5 font-mono text-slate-300">{po.transfer_order_number ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-muted">{po.transfer_date ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>
+                      {po.vendor ?? '—'}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-white">{(po.qty_open ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
