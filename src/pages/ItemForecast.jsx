@@ -35,6 +35,13 @@ function fmtDate(dateStr) {
   if (isNaN(d.getTime())) return String(dateStr);
   return `${MO[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
+function formatLocationDisplay(location) {
+  if (!location) return '—';
+  const normalized = location.toLowerCase();
+  if (normalized.includes('portland')) return 'Portland';
+  if (normalized.includes('hong kong')) return 'Hong Kong';
+  return location.replace(/^\d+\s*-\s*/, '').trim();
+}
 function addMonths(d, n) {
   return new Date(d.getFullYear(), d.getMonth() + n, 1);
 }
@@ -142,7 +149,7 @@ async function fetchItem(sku) {
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
     supabase.from('open_pos').select('po_number, po_date, vendor, status, sku, qty_ordered, qty_received, qty_open, unit_price, amount_remaining')
       .eq('sku', sku),
-    supabase.from('open_transfer_orders').select('transfer_order_number, transfer_date, vendor, status, sku, qty_ordered, qty_open, unit_price, amount_remaining')
+    supabase.from('open_transfer_orders').select('transfer_order_number, transfer_date, vendor, status, origin_location, destination_location, sku, qty_ordered, qty_open, unit_price, amount_remaining')
       .eq('sku', sku),
   ]);
   console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
@@ -435,7 +442,7 @@ export function ItemForecast() {
             <table className="w-full text-xs">
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
-                  {['Order', 'Date', 'Vendor', 'Qty Open', 'Status'].map(h => (
+                  {['Order', 'Date', 'Vendor', 'From', 'To', 'Qty Open', 'Status'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
                       {h}
                     </th>
@@ -452,6 +459,12 @@ export function ItemForecast() {
                     <td className="px-4 py-2.5 font-mono text-muted">{po.transfer_date ?? '—'}</td>
                     <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>
                       {po.vendor ?? '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.origin_location ?? undefined}>
+                      {formatLocationDisplay(po.origin_location)}
+                    </td>
+                    <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.destination_location ?? undefined}>
+                      {formatLocationDisplay(po.destination_location)}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-white">{(po.qty_open ?? 0).toLocaleString()}</td>
                     <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>

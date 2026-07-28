@@ -71,6 +71,8 @@ create table if not exists open_transfer_orders (
   transfer_order_number   text not null,
   vendor                  text,
   status                  text,
+  origin_location         text,
+  destination_location    text,
   qty_ordered             int     default 0,
   qty_open                int     default 0,
   unit_price              numeric default 0,
@@ -79,6 +81,8 @@ create table if not exists open_transfer_orders (
   primary key (transfer_order_number, sku)
 );
 create index if not exists idx_open_transfer_orders_sku on open_transfer_orders(sku);
+alter table open_transfer_orders add column if not exists origin_location text;
+alter table open_transfer_orders add column if not exists destination_location text;
 
 create table if not exists demand_forecast (
   sku        text primary key references skus(sku),
@@ -98,11 +102,19 @@ alter table open_pos enable row level security;
 alter table demand_forecast enable row level security;
 
 -- Allow anon read access (dashboard is read-only from browser)
+drop policy if exists "anon read skus" on skus;
 create policy "anon read skus" on skus for select using (true);
+drop policy if exists "anon read inventory_snapshot" on inventory_snapshot;
 create policy "anon read inventory_snapshot" on inventory_snapshot for select using (true);
+drop policy if exists "anon read monthly_sales" on monthly_sales;
 create policy "anon read monthly_sales" on monthly_sales for select using (true);
+drop policy if exists "anon read inventory_valuation" on inventory_valuation;
 create policy "anon read inventory_valuation" on inventory_valuation for select using (true);
+drop policy if exists "anon read po_history" on po_history;
 create policy "anon read po_history" on po_history for select using (true);
+drop policy if exists "anon read open_pos" on open_pos;
 create policy "anon read open_pos" on open_pos for select using (true);
+drop policy if exists "anon read open_transfer_orders" on open_transfer_orders;
 create policy "anon read open_transfer_orders" on open_transfer_orders for select using (true);
+drop policy if exists "anon read demand_forecast" on demand_forecast;
 create policy "anon read demand_forecast" on demand_forecast for select using (true);

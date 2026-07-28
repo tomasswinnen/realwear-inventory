@@ -16,6 +16,7 @@ Usage:
 import os
 import sys
 import glob
+import unicodedata
 from datetime import date, datetime
 from lxml import etree
 from dotenv import load_dotenv
@@ -473,6 +474,75 @@ def read_open_pos_xlsx():
     return db_rows
 
 
+TRANSFER_ORDER_HEADER_ALIASES = {
+    "to_number": "transfer_order_number",
+    "fecha": "transfer_date",
+    "estado": "status",
+    "ubicacion_origen": "origin_location",
+    "ubicacion_destino": "destination_location",
+    "item_sku_/_number": "sku",
+    "item_sku_number": "sku",
+    "item_number": "sku",
+    "item": "sku",
+    "cantidad_pedida": "qty_ordered",
+    "cantidad_enviada": "qty_sent",
+    "cantidad_recibida": "qty_received",
+    "pendiente_de_enviar": None,
+    "pendiente_de_recibir": "qty_open",
+    "line_id": None,
+    "transfer_date": "transfer_date",
+    "po_date": "transfer_date",
+}
+
+
+def normalize_header(cell: str) -> str:
+    value = unicodedata.normalize("NFKD", str(cell or ""))
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    return value.strip().lower().replace(" ", "_")
+
+
+def map_transfer_order_header(header_map: dict, cell: str, index: int):
+    normalized = normalize_header(cell)
+    if normalized in TRANSFER_ORDER_HEADER_ALIASES:
+        target = TRANSFER_ORDER_HEADER_ALIASES[normalized]
+        if target:
+            header_map[target] = index
+        return
+
+    if "sku" in normalized and normalized not in ("item", "item_number"):
+        header_map["sku"] = index
+    elif "transfer" in normalized and "order" in normalized:
+        header_map["transfer_order_number"] = index
+    elif normalized in ("to", "to_number"):
+        header_map["transfer_order_number"] = index
+    elif "origin" in normalized or "origen" in normalized or normalized.startswith("from") or normalized.endswith("_from"):
+        header_map["origin_location"] = index
+    elif "destination" in normalized or "destino" in normalized or normalized.startswith("to_") or normalized.endswith("_to"):
+        header_map["destination_location"] = index
+    elif "vendor" in normalized:
+        header_map["vendor"] = index
+    elif "status" in normalized:
+        header_map["status"] = index
+    elif "qty_open" in normalized or ("open" in normalized and "qty" in normalized):
+        header_map["qty_open"] = index
+    elif "qty_ordered" in normalized or ("ordered" in normalized and "qty" in normalized):
+        header_map["qty_ordered"] = index
+    elif "qty_received" in normalized or ("received" in normalized and "qty" in normalized):
+        header_map["qty_received"] = index
+    elif "unit" in normalized and ("price" in normalized or "cost" in normalized):
+        header_map["unit_price"] = index
+    elif "amount" in normalized and ("remaining" in normalized or "remaining_amount" in normalized):
+        header_map["amount_remaining"] = index
+    elif normalized in ("date", "transfer_date", "po_date"):
+        header_map["transfer_date"] = index
+
+
+def is_transfer_order_header(normalized: list[str]) -> bool:
+    has_sku = any("sku" in cell or cell in ("item", "item_number") for cell in normalized)
+    has_to = any("transfer" in cell or cell in ("to", "to_number") for cell in normalized)
+    return has_sku and has_to
+
+
 def read_transfer_orders(path: str) -> list[dict]:
     rows = parse_xls_xml(path)
     if not rows:
@@ -481,32 +551,11 @@ def read_transfer_orders(path: str) -> list[dict]:
     header_idx = None
     header_map = {}
     for i, row in enumerate(rows):
-        normalized = [str(cell or "").strip().lower().replace(" ", "_") for cell in row]
-        if any("sku" in cell for cell in normalized) and any("transfer" in cell for cell in normalized):
+        normalized = [normalize_header(cell) for cell in row]
+        if is_transfer_order_header(normalized):
             header_idx = i
-            for j, cell in enumerate(normalized):
-                if "sku" in cell:
-                    header_map["sku"] = j
-                elif "transfer" in cell and "order" in cell:
-                    header_map["transfer_order_number"] = j
-                elif cell in ("item", "item_number") and "sku" not in cell:
-                    header_map["sku"] = j
-                elif "vendor" in cell:
-                    header_map["vendor"] = j
-                elif "status" in cell:
-                    header_map["status"] = j
-                elif "qty_open" in cell or ("open" in cell and "qty" in cell):
-                    header_map["qty_open"] = j
-                elif "qty_ordered" in cell or ("ordered" in cell and "qty" in cell):
-                    header_map["qty_ordered"] = j
-                elif "qty_received" in cell or ("received" in cell and "qty" in cell):
-                    header_map["qty_received"] = j
-                elif "unit" in cell and ("price" in cell or "cost" in cell):
-                    header_map["unit_price"] = j
-                elif "amount" in cell and ("remaining" in cell or "remaining_amount" in cell):
-                    header_map["amount_remaining"] = j
-                elif cell in ("date", "transfer_date", "po_date"):
-                    header_map["transfer_date"] = j
+            for j, cell in enumerate(row):
+                map_transfer_order_header(header_map, cell, j)
             break
 
     if header_idx is None:
@@ -522,6 +571,8 @@ def read_transfer_orders(path: str) -> list[dict]:
             continue
         vendor = str(row[header_map.get("vendor", -1)]).strip() if header_map.get("vendor") is not None and len(row) > header_map["vendor"] else None
         status = str(row[header_map.get("status", -1)]).strip() if header_map.get("status") is not None and len(row) > header_map["status"] else None
+        origin_location = str(row[header_map.get("origin_location", -1)]).strip() if header_map.get("origin_location") is not None and len(row) > header_map["origin_location"] else None
+        destination_location = str(row[header_map.get("destination_location", -1)]).strip() if header_map.get("destination_location") is not None and len(row) > header_map["destination_location"] else None
         qty_ordered = safe_int(row[header_map.get("qty_ordered", -1)]) if header_map.get("qty_ordered") is not None and len(row) > header_map["qty_ordered"] else 0
         qty_open = safe_int(row[header_map.get("qty_open", -1)]) if header_map.get("qty_open") is not None and len(row) > header_map["qty_open"] else 0
         unit_price = safe_float(row[header_map.get("unit_price", -1)]) if header_map.get("unit_price") is not None and len(row) > header_map["unit_price"] else None
@@ -533,6 +584,8 @@ def read_transfer_orders(path: str) -> list[dict]:
             "transfer_order_number": transfer_order_number,
             "vendor": vendor,
             "status": status,
+            "origin_location": origin_location,
+            "destination_location": destination_location,
             "qty_ordered": qty_ordered or 0,
             "qty_open": qty_open or 0,
             "unit_price": unit_price or 0.0,
@@ -571,32 +624,11 @@ def read_transfer_orders_xlsx() -> list[dict]:
     header_idx = None
     header_map = {}
     for i, row in enumerate(rows):
-        normalized = [str(cell or "").strip().lower().replace(" ", "_") for cell in row]
-        if any("sku" in cell for cell in normalized) and any("transfer" in cell for cell in normalized):
+        normalized = [normalize_header(cell) for cell in row]
+        if is_transfer_order_header(normalized):
             header_idx = i
-            for j, cell in enumerate(normalized):
-                if "sku" in cell:
-                    header_map["sku"] = j
-                elif "transfer" in cell and "order" in cell:
-                    header_map["transfer_order_number"] = j
-                elif cell in ("item", "item_number") and "sku" not in cell:
-                    header_map["sku"] = j
-                elif "vendor" in cell:
-                    header_map["vendor"] = j
-                elif "status" in cell:
-                    header_map["status"] = j
-                elif "qty_open" in cell or ("open" in cell and "qty" in cell):
-                    header_map["qty_open"] = j
-                elif "qty_ordered" in cell or ("ordered" in cell and "qty" in cell):
-                    header_map["qty_ordered"] = j
-                elif "qty_received" in cell or ("received" in cell and "qty" in cell):
-                    header_map["qty_received"] = j
-                elif "unit" in cell and ("price" in cell or "cost" in cell):
-                    header_map["unit_price"] = j
-                elif "amount" in cell and ("remaining" in cell or "remaining_amount" in cell):
-                    header_map["amount_remaining"] = j
-                elif cell in ("date", "transfer_date", "po_date"):
-                    header_map["transfer_date"] = j
+            for j, cell in enumerate(row):
+                map_transfer_order_header(header_map, cell, j)
             break
 
     if header_idx is None:
@@ -612,6 +644,8 @@ def read_transfer_orders_xlsx() -> list[dict]:
             continue
         vendor = str(row[header_map.get("vendor", -1)]).strip() if header_map.get("vendor") is not None and len(row) > header_map["vendor"] else None
         status = str(row[header_map.get("status", -1)]).strip() if header_map.get("status") is not None and len(row) > header_map["status"] else None
+        origin_location = str(row[header_map.get("origin_location", -1)]).strip() if header_map.get("origin_location") is not None and len(row) > header_map["origin_location"] else None
+        destination_location = str(row[header_map.get("destination_location", -1)]).strip() if header_map.get("destination_location") is not None and len(row) > header_map["destination_location"] else None
         qty_ordered = safe_int(row[header_map.get("qty_ordered", -1)]) if header_map.get("qty_ordered") is not None and len(row) > header_map["qty_ordered"] else 0
         qty_open = safe_int(row[header_map.get("qty_open", -1)]) if header_map.get("qty_open") is not None and len(row) > header_map["qty_open"] else 0
         unit_price = safe_float(row[header_map.get("unit_price", -1)]) if header_map.get("unit_price") is not None and len(row) > header_map["unit_price"] else None
@@ -623,6 +657,8 @@ def read_transfer_orders_xlsx() -> list[dict]:
             "transfer_order_number": transfer_order_number,
             "vendor": vendor,
             "status": status,
+            "origin_location": origin_location,
+            "destination_location": destination_location,
             "qty_ordered": qty_ordered or 0,
             "qty_open": qty_open or 0,
             "unit_price": unit_price or 0.0,

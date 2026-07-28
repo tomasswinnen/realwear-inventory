@@ -4,9 +4,11 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 
 export function Login() {
+  const [mode, setMode] = useState('signin'); // 'signin' | 'signup'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const session = useAuth();
@@ -15,13 +17,31 @@ export function Login() {
     if (session) navigate('/', { replace: true });
   }, [session, navigate]);
 
+  function toggleMode() {
+    setMode(m => (m === 'signin' ? 'signup' : 'signin'));
+    setError('');
+    setInfo('');
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    setInfo('');
     setLoading(true);
     try {
-      const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-      if (err) setError(err.message || 'Login failed. Check your credentials.');
+      if (mode === 'signup') {
+        const { data, error: err } = await supabase.auth.signUp({ email, password });
+        if (err) {
+          setError(err.message || 'Sign up failed.');
+        } else if (data.session) {
+          // Email confirmation disabled — signed in immediately.
+        } else {
+          setInfo('Check your email to confirm your account before signing in.');
+        }
+      } else {
+        const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+        if (err) setError(err.message || 'Login failed. Check your credentials.');
+      }
     } catch {
       setError('Connection error — check console for details.');
     }
@@ -44,7 +64,9 @@ export function Login() {
           onSubmit={handleSubmit}
           className="bg-[#0d1620] border border-white/[0.08] rounded-lg p-6 space-y-4"
         >
-          <h1 className="text-white font-semibold text-lg font-sans">Sign in</h1>
+          <h1 className="text-white font-semibold text-lg font-sans">
+            {mode === 'signup' ? 'Create account' : 'Sign in'}
+          </h1>
 
           <div className="space-y-1">
             <label className="text-xs text-slate-400 font-sans">Email</label>
@@ -64,6 +86,7 @@ export function Login() {
             <input
               type="password"
               required
+              minLength={6}
               value={password}
               onChange={e => setPassword(e.target.value)}
               className="w-full bg-[#0f1923] border border-white/[0.10] rounded px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-accent"
@@ -74,14 +97,30 @@ export function Login() {
           {error && (
             <p className="text-red-400 text-xs font-sans">{error}</p>
           )}
+          {info && (
+            <p className="text-emerald-400 text-xs font-sans">{info}</p>
+          )}
 
           <button
             type="submit"
             disabled={loading}
             className="w-full bg-accent hover:bg-accent/90 disabled:opacity-50 text-white font-sans font-medium text-sm rounded px-4 py-2 transition-colors"
           >
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading
+              ? mode === 'signup' ? 'Creating account…' : 'Signing in…'
+              : mode === 'signup' ? 'Create account' : 'Sign in'}
           </button>
+
+          <p className="text-center text-xs text-slate-400 font-sans">
+            {mode === 'signup' ? 'Already have an account?' : "Don't have an account?"}{' '}
+            <button
+              type="button"
+              onClick={toggleMode}
+              className="text-accent hover:underline font-medium"
+            >
+              {mode === 'signup' ? 'Sign in' : 'Create one'}
+            </button>
+          </p>
         </form>
       </div>
     </div>

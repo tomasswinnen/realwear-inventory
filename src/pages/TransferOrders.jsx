@@ -6,10 +6,18 @@ import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
 import { formatCurrency } from '../utils/coverage';
 
+function formatLocationDisplay(location) {
+  if (!location) return '—';
+  const normalized = location.toLowerCase();
+  if (normalized.includes('portland')) return 'Portland';
+  if (normalized.includes('hong kong')) return 'Hong Kong';
+  return location.replace(/^\d+\s*-\s*/, '').trim();
+}
+
 async function fetchOpenTransferOrders() {
   const ordersRes = await excludeSkus(
     supabase.from('open_transfer_orders')
-      .select('transfer_order_number, transfer_date, vendor, sku, status, qty_ordered, qty_open, unit_price, amount_remaining')
+      .select('transfer_order_number, transfer_date, vendor, sku, status, origin_location, destination_location, qty_ordered, qty_open, unit_price, amount_remaining')
       .order('transfer_date', { ascending: false })
   );
   if (ordersRes.error) throw new Error(ordersRes.error.message);
@@ -69,7 +77,7 @@ export function TransferOrders() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['Order', 'Date', 'SKU', 'Vendor', 'Status', 'Qty Ordered', 'Qty Open', 'Unit Price', 'Remaining'].map(h => (
+                    {['Order', 'Date', 'SKU', 'Vendor', 'From', 'To', 'Status', 'Qty Ordered', 'Qty Open', 'Unit Price', 'Remaining'].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -81,8 +89,19 @@ export function TransferOrders() {
                     <tr key={order.transfer_order_number} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-3 py-2.5 font-mono text-accent">{order.transfer_order_number}</td>
                       <td className="px-3 py-2.5 font-mono text-muted">{order.transfer_date ?? '—'}</td>
-                      <td className="px-3 py-2.5"><Link to={`/item/${order.sku}`} className="font-mono text-accent hover:text-accent/80">{order.sku}</Link></td>
+                      <td className="px-3 py-2.5 align-top">
+                        <Link to={`/item/${order.sku}`} className="font-mono text-accent hover:text-accent/80">{order.sku}</Link>
+                        {(order.origin_location || order.destination_location) && (
+                          <div className="mt-1 text-[11px] text-slate-400 font-sans leading-tight">
+                            <span>{formatLocationDisplay(order.origin_location)}</span>
+                            <span className="mx-1">→</span>
+                            <span>{formatLocationDisplay(order.destination_location)}</span>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 text-slate-300 font-sans truncate" title={order.vendor}>{order.vendor ?? '—'}</td>
+                      <td className="px-3 py-2.5 text-slate-300 font-sans truncate" title={order.origin_location}>{formatLocationDisplay(order.origin_location)}</td>
+                      <td className="px-3 py-2.5 text-slate-300 font-sans truncate" title={order.destination_location}>{formatLocationDisplay(order.destination_location)}</td>
                       <td className="px-3 py-2.5 font-mono text-white">{order.status ?? '—'}</td>
                       <td className="px-3 py-2.5 font-mono text-white">{(order.qty_ordered ?? 0).toLocaleString()}</td>
                       <td className="px-3 py-2.5 font-mono text-white">{(order.qty_open ?? 0).toLocaleString()}</td>
