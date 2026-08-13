@@ -92,9 +92,11 @@ create table if not exists demand_forecast (
 );
 create index if not exists idx_demand_forecast_sku on demand_forecast(sku);
 
+-- sku is NOT a FK to skus(sku): distributor reports use their own part numbers/codes
+-- (accessory SKUs, service/bundle SKUs, etc.) that don't reliably match our catalog.
 create table if not exists distributor_stock (
   distributor text not null,
-  sku         text not null references skus(sku),
+  sku         text not null,
   qty_on_hand int     default 0,
   updated_at  date not null default current_date,
   primary key (distributor, sku)

@@ -696,6 +696,164 @@ def parse_and_upsert_transfer_orders(supabase, folder):
     return len(results)
 
 
+# ── Distributor stock ─────────────────────────────────────────────────────────
+# Each distributor emails their own report format. One workbook sheet per
+# distributor; sheet layouts vary, so each known layout gets its own explicit
+# column mapping below. Unrecognized layouts are skipped with a warning
+# instead of guessed at.
+
+DISTRIBUTOR_SKIP_MATERIAL_TYPES = {
+    "vendor-provided service", "subscriptions", "software (non-physical)",
+}
+
+
+def _sheet_base_name(sheet_name: str) -> str:
+    """'07 ScanSource 1' -> 'ScanSource'; '07 Elmark Automatyka SA' -> 'Elmark Automatyka SA'."""
+    name = _re.sub(r'^\d+\s*', '', sheet_name).strip()
+    name = _re.sub(r'\s+\d+$', '', name).strip()
+    return name or sheet_name
+
+
+def _find_distributor_header(rows: list, required_any: set) -> tuple:
+    for i, r in enumerate(rows[:15]):
+        if not r:
+            continue
+        norm = [str(c).strip().lower() if c is not None else '' for c in r]
+        if any(h in norm for h in required_any):
+            return i, norm
+    return None, None
+
+
+def _parse_sap_distributor_sheet(rows: list, header_idx: int, header: list) -> tuple:
+    """SAP-style export (e.g. ScanSource): Manufacturer Part Number + On Hand Qty Unrestricted."""
+    sku_col = header.index('manufacturer part number')
+    qty_col = header.index('on hand qty unrestricted')
+    type_col = header.index('material type') if 'material type' in header else None
+    date_col = header.index('date') if 'date' in header else None
+
+    out, max_date = [], None
+    for r in rows[header_idx + 1:]:
+        if not r or r[sku_col] in (None, ''):
+            continue
+        if type_col is not None and r[type_col] and str(r[type_col]).strip().lower() in DISTRIBUTOR_SKIP_MATERIAL_TYPES:
+            continue
+        if date_col is not None and r[date_col]:
+            d = r[date_col].date() if hasattr(r[date_col], 'date') else None
+            if d and (max_date is None or d > max_date):
+                max_date = d
+        out.append({'sku': str(r[sku_col]).strip(), 'qty_on_hand': safe_int(r[qty_col]) or 0})
+    return out, max_date
+
+
+def _parse_also_distributor_sheet(rows: list, header_idx: int, header: list) -> tuple:
+    """ALSO-style export: VendorPartNumber + StockQuantity, StockDate as YYYYMMDD int."""
+    sku_col = header.index('vendorpartnumber')
+    qty_col = header.index('stockquantity')
+    date_col = header.index('stockdate') if 'stockdate' in header else None
+
+    out, max_date = [], None
+    for r in rows[header_idx + 1:]:
+        if not r or r[sku_col] in (None, ''):
+            continue
+        if date_col is not None and r[date_col]:
+            try:
+                d = datetime.strptime(str(int(r[date_col])), '%Y%m%d').date()
+                if max_date is None or d > max_date:
+                    max_date = d
+            except (ValueError, TypeError):
+                pass
+        out.append({'sku': str(r[sku_col]).strip(), 'qty_on_hand': safe_int(r[qty_col]) or 0})
+    return out, max_date
+
+
+def _parse_simple_distributor_sheet(rows: list, header_idx: int, header: list) -> tuple:
+    """Simple template (e.g. Elmark): SKU ('Product_CODE') + QTY_Available."""
+    sku_col = header.index('sku')
+    qty_col = header.index('qty_available')
+
+    out = []
+    for r in rows[header_idx + 1:]:
+        if not r or not r[sku_col]:
+            continue
+        raw_sku = str(r[sku_col]).strip()
+        sku = raw_sku.rsplit('_', 1)[-1] if '_' in raw_sku else raw_sku
+        out.append({'sku': sku, 'qty_on_hand': safe_int(r[qty_col]) or 0})
+    return out, None
+
+
+def read_distributor_stock(path: str) -> list[dict]:
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+
+    by_distributor = {}  # base_name -> (parsed_rows, max_date, sheet_name)
+    for sheet_name in wb.sheetnames:
+        rows = list(wb[sheet_name].iter_rows(values_only=True))
+        header_idx, header = _find_distributor_header(
+            rows, {'manufacturer part number', 'vendorpartnumber', 'sku'})
+        if header_idx is None:
+            print(f"  {sheet_name}: header not recognized -- skipping")
+            continue
+
+        if 'manufacturer part number' in header and 'on hand qty unrestricted' in header:
+            parsed, max_date = _parse_sap_distributor_sheet(rows, header_idx, header)
+        elif 'vendorpartnumber' in header and 'stockquantity' in header:
+            parsed, max_date = _parse_also_distributor_sheet(rows, header_idx, header)
+        elif 'sku' in header and 'qty_available' in header:
+            parsed, max_date = _parse_simple_distributor_sheet(rows, header_idx, header)
+        else:
+            print(f"  {sheet_name}: unrecognized column layout -- skipping")
+            continue
+
+        base = _sheet_base_name(sheet_name)
+        existing = by_distributor.get(base)
+        if existing is None:
+            by_distributor[base] = (parsed, max_date, sheet_name)
+        elif max_date is not None and (existing[1] is None or max_date > existing[1]):
+            by_distributor[base] = (parsed, max_date, sheet_name)
+        else:
+            print(f"  {sheet_name}: superseded by newer '{existing[2]}' data for '{base}' -- skipping")
+
+    wb.close()
+
+    db_rows = []
+    for distributor, (parsed, max_date, sheet_name) in by_distributor.items():
+        updated_at = max_date.isoformat() if max_date else today
+        seen_skus = set()
+        for p in parsed:
+            if not p['sku'] or p['sku'] in seen_skus:
+                continue
+            seen_skus.add(p['sku'])
+            db_rows.append({
+                'distributor': distributor,
+                'sku': p['sku'],
+                'qty_on_hand': p['qty_on_hand'],
+                'updated_at': updated_at,
+            })
+        print(f"  {sheet_name} -> {distributor}: {len(seen_skus)} rows")
+
+    return db_rows
+
+
+def parse_and_upsert_distributor_stock(supabase, folder):
+    matches = [m for m in glob.glob(os.path.join(folder, "Inventory Q*.xlsx"))
+               if not os.path.basename(m).startswith("~$")]
+    if not matches:
+        print("No distributor inventory file found (Inventory Q*.xlsx)")
+        return 0
+
+    path = max(matches, key=os.path.getmtime)
+    print(f"Parsing: {os.path.basename(path)}")
+    results = read_distributor_stock(path)
+    if not results:
+        print("  no distributor stock rows parsed")
+        return 0
+
+    supabase.table('distributor_stock').delete().neq('distributor', '').execute()
+    supabase.table('distributor_stock').insert(results).execute()
+    print(f"Inserted {len(results)} distributor stock rows")
+    return len(results)
+
+
 # ── Demand forecast ───────────────────────────────────────────────────────────
 
 def build_demand_forecast(sales_rows: list) -> list:
@@ -836,6 +994,10 @@ def main():
     print("\n>> open_transfer_orders")
     m = parse_and_upsert_transfer_orders(supabase, SEARCH_DIR)
     print(f"  open_transfer_orders: {m} rows")
+
+    print("\n>> distributor_stock")
+    d = parse_and_upsert_distributor_stock(supabase, SEARCH_DIR)
+    print(f"  distributor_stock: {d} rows")
 
     print("\nDone.")
 
