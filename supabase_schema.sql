@@ -92,6 +92,15 @@ create table if not exists demand_forecast (
 );
 create index if not exists idx_demand_forecast_sku on demand_forecast(sku);
 
+create table if not exists distributor_stock (
+  distributor text not null,
+  sku         text not null references skus(sku),
+  qty_on_hand int     default 0,
+  updated_at  date not null default current_date,
+  primary key (distributor, sku)
+);
+create index if not exists idx_distributor_stock_sku on distributor_stock(sku);
+
 -- Enable Row Level Security (recommended)
 alter table skus enable row level security;
 alter table inventory_snapshot enable row level security;
@@ -100,6 +109,7 @@ alter table inventory_valuation enable row level security;
 alter table po_history enable row level security;
 alter table open_pos enable row level security;
 alter table demand_forecast enable row level security;
+alter table distributor_stock enable row level security;
 
 -- Allow anon read access (dashboard is read-only from browser)
 drop policy if exists "anon read skus" on skus;
@@ -118,3 +128,5 @@ drop policy if exists "anon read open_transfer_orders" on open_transfer_orders;
 create policy "anon read open_transfer_orders" on open_transfer_orders for select using (true);
 drop policy if exists "anon read demand_forecast" on demand_forecast;
 create policy "anon read demand_forecast" on demand_forecast for select using (true);
+drop policy if exists "anon read distributor_stock" on distributor_stock;
+create policy "anon read distributor_stock" on distributor_stock for select using (true);
