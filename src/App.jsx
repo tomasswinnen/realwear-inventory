@@ -15,6 +15,7 @@ const ReorderAlerts = lazy(() => import('./pages/ReorderAlerts').then(m => ({ de
 const OpenTransferOrders = lazy(() => import('./pages/TransferOrders').then(m => ({ default: m.TransferOrders })));
 const OnOrder = lazy(() => import('./pages/OnOrder').then(m => ({ default: m.OnOrder })));
 const DistributorStock = lazy(() => import('./pages/DistributorStock').then(m => ({ default: m.DistributorStock })));
+const SalesPipeline = lazy(() => import('./pages/SalesPipeline').then(m => ({ default: m.SalesPipeline })));
 
 function PageFallback() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="open-transfer-orders" element={<Suspense fallback={<PageFallback />}><OpenTransferOrders /></Suspense>} />
             <Route path="on-order" element={<Suspense fallback={<PageFallback />}><OnOrder /></Suspense>} />
             <Route path="distributor-stock" element={<Suspense fallback={<PageFallback />}><DistributorStock /></Suspense>} />
+            <Route path="sales-pipeline" element={<Suspense fallback={<PageFallback />}><SalesPipeline /></Suspense>} />
           </Route>
         </Routes>
       </ErrorBoundary>

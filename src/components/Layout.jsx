@@ -11,6 +11,7 @@ const NAV = [
   { to: '/on-order',    label: 'On Order',       icon: '📦' },
   { to: '/open-transfer-orders', label: 'Open Transfer Orders', icon: '🔁' },
   { to: '/distributor-stock', label: 'Distributor Stock', icon: '🏬' },
+  { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
   { to: '/reorder',     label: 'Reorder Alerts', icon: '🔴' },
 ];
 

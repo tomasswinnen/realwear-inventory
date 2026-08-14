@@ -103,6 +103,33 @@ create table if not exists distributor_stock (
 );
 create index if not exists idx_distributor_stock_sku on distributor_stock(sku);
 
+-- Sales pipeline deals imported from the HubSpot "Sales Pipeline" export.
+-- distributor is the cleaned-up primary distributor (for grouping); distributor_raw
+-- keeps the full original value since a deal can list more than one.
+-- line_items is [{ "name": "...", "id": "..." }] — HubSpot line item name + record id,
+-- not necessarily a catalog SKU from the skus table.
+create table if not exists sales_pipeline (
+  record_id          text primary key,
+  deal_name          text,
+  deal_owner         text,
+  amount             numeric,
+  company            text,
+  distributor        text,
+  distributor_raw    text,
+  reseller           text,
+  close_date         date,
+  deal_stage         text,
+  line_items         jsonb not null default '[]'::jsonb,
+  geography          text,
+  country            text,
+  state_region       text,
+  create_date        date,
+  last_modified_date timestamptz,
+  updated_at         timestamptz not null default now()
+);
+create index if not exists idx_sales_pipeline_distributor on sales_pipeline(distributor);
+create index if not exists idx_sales_pipeline_stage on sales_pipeline(deal_stage);
+
 -- Enable Row Level Security (recommended)
 alter table skus enable row level security;
 alter table inventory_snapshot enable row level security;
@@ -112,6 +139,7 @@ alter table po_history enable row level security;
 alter table open_pos enable row level security;
 alter table demand_forecast enable row level security;
 alter table distributor_stock enable row level security;
+alter table sales_pipeline enable row level security;
 
 -- Allow anon read access (dashboard is read-only from browser)
 drop policy if exists "anon read skus" on skus;
@@ -132,3 +160,5 @@ drop policy if exists "anon read demand_forecast" on demand_forecast;
 create policy "anon read demand_forecast" on demand_forecast for select using (true);
 drop policy if exists "anon read distributor_stock" on distributor_stock;
 create policy "anon read distributor_stock" on distributor_stock for select using (true);
+drop policy if exists "anon read sales_pipeline" on sales_pipeline;
+create policy "anon read sales_pipeline" on sales_pipeline for select using (true);

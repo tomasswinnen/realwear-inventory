@@ -12,6 +12,11 @@ const STATUS_STYLES = {
   Partial:    'bg-warning/10 text-warning',
   Cancelled:  'bg-muted/20 text-muted',
   Pending:    'bg-warning/10 text-warning',
+  // sales_pipeline deal stages
+  'Contract & Negotiation': 'bg-accent/10 text-accent',
+  'PO & $$$':               'bg-blue-500/15 text-blue-400',
+  'Closed won':             'bg-success/10 text-success',
+  'Closed lost':            'bg-danger/10 text-danger',
 };
 
 export function StatusBadge({ status }) {
