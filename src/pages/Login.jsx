@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
+import brandMark from '../assets/realwear-brand-mark-white.svg';
+import wordmark from '../assets/realwear-wordmark-white.svg';
 
 export function Login() {
   const [mode, setMode] = useState('signin'); // 'signin' | 'signup'
@@ -51,13 +53,14 @@ export function Login() {
   return (
     <div className="min-h-screen bg-[#0f1923] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 mb-8 justify-center">
-          <div className="w-7 h-7 bg-accent rounded flex items-center justify-center">
-            <span className="text-white font-bold text-xs font-mono">RW</span>
+        <div className="flex flex-col items-center gap-3 mb-8">
+          <img src={brandMark} alt="" className="w-10 h-10" />
+          <div className="flex flex-col items-center gap-1">
+            <img src={wordmark} alt="RealWear" className="h-4 w-auto" />
+            <span className="text-[10px] text-muted font-mono uppercase tracking-widest">
+              Inventory
+            </span>
           </div>
-          <span className="font-sans font-semibold text-white text-base tracking-wide">
-            Inventory
-          </span>
         </div>
 
         <form

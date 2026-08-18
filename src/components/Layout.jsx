@@ -1,6 +1,8 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import brandMark from '../assets/realwear-brand-mark-white.svg';
+import wordmark from '../assets/realwear-wordmark-white.svg';
 
 const NAV = [
   { to: '/',            label: 'Dashboard',      icon: '⬛' },
@@ -51,13 +53,14 @@ export function Layout() {
         `}
       >
         {/* Logo */}
-        <div className="flex items-center gap-2 px-4 py-5 border-b border-white/[0.08]">
-          <div className="w-6 h-6 bg-accent rounded flex items-center justify-center">
-            <span className="text-white font-bold text-xs font-mono">RW</span>
+        <div className="flex items-center gap-2.5 px-4 py-5 border-b border-white/[0.08]">
+          <img src={brandMark} alt="" className="w-6 h-6 shrink-0" />
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <img src={wordmark} alt="RealWear" className="h-[10px] w-auto" />
+            <span className="text-[9px] text-muted font-mono uppercase tracking-widest leading-none">
+              Inventory
+            </span>
           </div>
-          <span className="font-sans font-semibold text-white text-sm tracking-wide">
-            Inventory
-          </span>
         </div>
 
         {/* Nav */}
