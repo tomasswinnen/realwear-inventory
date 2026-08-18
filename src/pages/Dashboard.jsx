@@ -12,18 +12,21 @@ import { CoverageCell } from '../components/CoverageCell';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { QueryError } from '../components/QueryError';
 import { KPISkeleton, TableSkeleton, ChartSkeleton } from '../components/Skeleton';
+import { DataFreshness } from '../components/DataFreshness';
 import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '../utils/coverage';
 
 
 async function fetchDashboardData() {
-  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes] = await Promise.all([
+  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes, distStockFreshRes, pipelineFreshRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
-    excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
     supabase.from('open_pos').select('po_number, sku, vendor, qty_open, amount_remaining, status, po_date').order('po_date', { ascending: false }),
     supabase.from('sku_notes').select('sku, note, status'),
     excludeSkus(supabase.from('monthly_sales').select('sku, month').gt('qty_sold', 0).order('month', { ascending: false })),
+    supabase.from('distributor_stock').select('updated_at').order('updated_at', { ascending: false }).limit(1),
+    supabase.from('sales_pipeline').select('updated_at').order('updated_at', { ascending: false }).limit(1),
   ]);
 
   console.log('open_pos query result:', poRes.data, poRes.error);
@@ -40,6 +43,9 @@ async function fetchDashboardData() {
     openPOs: poRes.data,
     notes: notesRes.data ?? [],
     sales: salesRes.data ?? [],
+    snapshotUpdated: snapshotRes.data?.[0]?.updated_at ?? null,
+    distStockUpdated: distStockFreshRes.data?.[0]?.updated_at ?? null,
+    pipelineUpdated: pipelineFreshRes.data?.[0]?.updated_at?.slice(0, 10) ?? null,
   };
 }
 
@@ -187,9 +193,20 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-sans font-semibold text-white">Dashboard</h1>
-        <p className="text-xs text-muted font-mono mt-0.5">Inventory overview</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-sans font-semibold text-white">Dashboard</h1>
+          <p className="text-xs text-muted font-mono mt-0.5">Inventory overview</p>
+        </div>
+        {!loading && (
+          <DataFreshness
+            sources={[
+              { label: 'Inventory', date: data.snapshotUpdated },
+              { label: 'Distributor Stock', date: data.distStockUpdated },
+              { label: 'Sales Pipeline', date: data.pipelineUpdated },
+            ]}
+          />
+        )}
       </div>
 
       {/* KPI row */}

@@ -120,6 +120,12 @@ def main():
         reader = csv.DictReader(f)
         rows = [parse_row(r) for r in reader if (r.get("Record ID") or "").strip()]
 
+    # Stamp every row with this sync's timestamp so the Dashboard's "last updated"
+    # indicator reflects when the CSV was actually imported, not the first insert.
+    sync_ts = datetime.utcnow().isoformat()
+    for row in rows:
+        row["updated_at"] = sync_ts
+
     print(f"Parsed {len(rows)} deals")
     chunk_size = 200
     for i in range(0, len(rows), chunk_size):

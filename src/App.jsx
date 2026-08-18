@@ -16,6 +16,7 @@ const OpenTransferOrders = lazy(() => import('./pages/TransferOrders').then(m =>
 const OnOrder = lazy(() => import('./pages/OnOrder').then(m => ({ default: m.OnOrder })));
 const DistributorStock = lazy(() => import('./pages/DistributorStock').then(m => ({ default: m.DistributorStock })));
 const SalesPipeline = lazy(() => import('./pages/SalesPipeline').then(m => ({ default: m.SalesPipeline })));
+const DistributorScorecard = lazy(() => import('./pages/DistributorScorecard').then(m => ({ default: m.DistributorScorecard })));
 
 function PageFallback() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="on-order" element={<Suspense fallback={<PageFallback />}><OnOrder /></Suspense>} />
             <Route path="distributor-stock" element={<Suspense fallback={<PageFallback />}><DistributorStock /></Suspense>} />
             <Route path="sales-pipeline" element={<Suspense fallback={<PageFallback />}><SalesPipeline /></Suspense>} />
+            <Route path="distributor-scorecard" element={<Suspense fallback={<PageFallback />}><DistributorScorecard /></Suspense>} />
           </Route>
         </Routes>
       </ErrorBoundary>

@@ -10,14 +10,10 @@ import { TableSkeleton, KPISkeleton, ChartSkeleton } from '../components/Skeleto
 import { KPICard } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatCurrency } from '../utils/coverage';
+import { OPEN_STAGES, STAGE_WEIGHT } from '../utils/pipeline';
 
 const NO_DISTRIBUTOR = '— No distributor listed —';
 const STAGES = ['Contract & Negotiation', 'PO & $$$', 'Closed won'];
-const OPEN_STAGES = ['Contract & Negotiation', 'PO & $$$'];
-
-// Rough close-probability per stage, used only for the "Weighted Forecast" KPI.
-// PO & $$$ is much closer to a real order than early Contract & Negotiation deals.
-const STAGE_WEIGHT = { 'Contract & Negotiation': 0.4, 'PO & $$$': 0.75 };
 const STAGE_COLOR = { 'Contract & Negotiation': '#0ea5e9', 'PO & $$$': '#60a5fa' };
 
 const todayStr = new Date().toISOString().slice(0, 10);

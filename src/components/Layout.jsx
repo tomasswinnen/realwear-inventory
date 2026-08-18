@@ -12,6 +12,7 @@ const NAV = [
   { to: '/open-transfer-orders', label: 'Open Transfer Orders', icon: '🔁' },
   { to: '/distributor-stock', label: 'Distributor Stock', icon: '🏬' },
   { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
+  { to: '/distributor-scorecard', label: 'Distributor Scorecard', icon: '🧮' },
   { to: '/reorder',     label: 'Reorder Alerts', icon: '🔴' },
 ];
 
