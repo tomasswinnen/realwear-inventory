@@ -130,7 +130,14 @@ export function POHistory() {
                     <td className="px-4 py-2.5 font-mono text-white">{po.qty_ordered?.toLocaleString()}</td>
                     <td className="px-4 py-2.5 font-mono text-white">{formatCurrency(po.unit_cost)}</td>
                     <td className="px-4 py-2.5 font-mono text-white">{formatCurrency((po.qty_ordered ?? 0) * (po.unit_cost ?? 0))}</td>
-                    <td className="px-4 py-2.5 font-mono text-muted">{po.created_at ? new Date(po.created_at).toLocaleDateString() : '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-muted">
+                      {/* po_date is the real PO date (see update_inventory.py / fetch_netsuite.py
+                          fetch_po_dates). Fall back to created_at (upload timestamp) only for
+                          rows uploaded before that column existed. */}
+                      {po.po_date
+                        ? new Date(po.po_date + 'T00:00:00').toLocaleDateString()
+                        : (po.created_at ? new Date(po.created_at).toLocaleDateString() : '—')}
+                    </td>
                   </tr>
                 ))}
               </tbody>

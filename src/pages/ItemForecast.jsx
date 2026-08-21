@@ -144,7 +144,12 @@ async function fetchItem(sku) {
     supabase.from('inventory_valuation').select('on_hand, inv_value').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
     supabase.from('sku_notes').select('note, status').eq('sku', sku).maybeSingle(),
-    supabase.from('po_history').select('po_number, vendor, qty_ordered, unit_cost, status, created_at')
+    // select('*') on purpose: po_date may not exist yet on every deploy of the
+    // po_history table (it's a new column — see update_inventory.py
+    // create_po_history_sheet / fetch_netsuite.py fetch_po_dates). An explicit
+    // column list would 400 the whole item page until the column is added;
+    // '*' just yields undefined for it meanwhile and we fall back gracefully.
+    supabase.from('po_history').select('*')
       .eq('sku', sku).order('created_at', { ascending: false }),
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
     supabase.from('open_pos').select('po_number, po_date, vendor, status, sku, qty_ordered, qty_received, qty_open, unit_price, amount_remaining')
@@ -274,8 +279,15 @@ export function ItemForecast() {
     const fromHistory = (data.pos ?? []).map(p => ({
       po_number: p.po_number, vendor: p.vendor, qty_ordered: p.qty_ordered,
       unit_cost: p.unit_cost, status: p.status,
-      // Prefer po_date from open_pos over script-run created_at
-      date: openDateByPO[p.po_number] ?? p.created_at ?? null,
+      // Real po_date now comes from po_history itself (fetch_netsuite.py's
+      // .po_dates_cache.json, wired through update_inventory.py's PO History
+      // sheet). Before this, po_history had no date at all, so every closed
+      // PO fell back to created_at — the Supabase upload timestamp, which is
+      // the same for every row uploaded in one run. That's why PO History
+      // looked like every PO happened "today". Prefer the real date; keep
+      // the open_pos lookup and created_at as fallbacks for rows uploaded
+      // before this fix.
+      date: p.po_date ?? openDateByPO[p.po_number] ?? p.created_at ?? null,
       source: 'history',
     }));
     const fromOpen = (data.openPos ?? []).map(p => ({
