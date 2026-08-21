@@ -135,7 +135,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -151,6 +151,8 @@ async function fetchItem(sku) {
       .eq('sku', sku),
     supabase.from('open_transfer_orders').select('transfer_order_number, transfer_date, vendor, status, origin_location, destination_location, sku, qty_ordered, qty_open, unit_price, amount_remaining')
       .eq('sku', sku),
+    supabase.from('distributor_stock').select('distributor, qty_on_hand, updated_at')
+      .eq('sku', sku).order('qty_on_hand', { ascending: false }),
   ]);
   console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
 
@@ -167,6 +169,7 @@ async function fetchItem(sku) {
     forecast: fcRes.data ?? null,
     openPos: openPosRes.data ?? [],
     openTransferOrders: openTransferRes.data ?? [],
+    distStock: distStockRes.data ?? [],
   };
 }
 
@@ -291,6 +294,8 @@ export function ItemForecast() {
   const onHand = snap.on_hand_total ?? 0;
   const onOrder = computed?.onOrderEffective ?? snap.on_order ?? 0;
   const openTransferOrders = data?.openTransferOrders ?? [];
+  const distStock = data?.distStock ?? [];
+  const distStockTotal = distStock.reduce((s, r) => s + (r.qty_on_hand ?? 0), 0);
 
   // KPI card definitions
   const kpis = [
@@ -473,6 +478,42 @@ export function ItemForecast() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── Distributor Stock ── */}
+      {sku && !loading && distStock.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ background: '#162030', border: '1px solid rgba(148,163,184,0.08)' }}>
+          <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'rgba(148,163,184,0.08)' }}>
+            <h3 className="text-sm font-sans font-semibold text-white">Distributor Stock</h3>
+            <span className="text-xs font-mono text-muted">
+              {distStockTotal.toLocaleString()} units across {distStock.length} distributor{distStock.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                {['Distributor', 'Qty On Hand', 'Updated'].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {distStock.map((row, i) => (
+                <tr
+                  key={`${row.distributor}-${i}`}
+                  style={{ borderBottom: i < distStock.length - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
+                  className="hover:bg-white/[0.02] transition-colors"
+                >
+                  <td className="px-4 py-2.5 text-slate-300 font-sans">{row.distributor}</td>
+                  <td className="px-4 py-2.5 font-mono text-white">{(row.qty_on_hand ?? 0).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 font-mono text-muted">{row.updated_at ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
