@@ -207,9 +207,13 @@ export function ItemForecast() {
     const portland = data.snap.on_hand_portland ?? 0;
     const hk = data.snap.on_hand_hk ?? 0;
     // Use the higher of: NetSuite snapshot on_order vs sum of active POs
-    const posOnOrder = (data.pos ?? [])
-      .filter(po => po.status?.includes('Pending') || po.status?.includes('Receipt'))
-      .reduce((sum, po) => sum + (po.qty_ordered ?? 0), 0);
+    // Sum from open_pos (accurate qty_open per line, fed by SuiteQL) instead of
+    // po_history (original qty_ordered, and known to drop multi-rate PO lines —
+    // see update_inventory.py create_po_history_sheet). This was the root cause
+    // of ON ORDER undercounting SKUs with multiple open PO lines (e.g. 127128*
+    // showed 408 instead of 4,720).
+    const posOnOrder = (data.openPos ?? [])
+      .reduce((sum, po) => sum + (po.qty_open ?? po.qty_ordered ?? 0), 0);
     const onOrderEffective = Math.max(data.snap.on_order ?? 0, posOnOrder);
     const coverage = a6 > 0 ? onHand / a6 : Infinity;
     const coveragePortland = a6 > 0 ? portland / a6 : Infinity;
