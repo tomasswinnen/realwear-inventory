@@ -13,6 +13,11 @@ const NAV = [
   { to: '/distributor-stock', label: 'Distributor Stock', icon: '🏬' },
   { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
   { to: '/distributor-scorecard', label: 'Distributor Scorecard', icon: '🧮' },
+  { to: '/backlog',     label: 'Sales Backlog',  icon: '🧾' },
+  { to: '/serials',     label: 'Serial Numbers', icon: '🔢' },
+  { to: '/lead-times',  label: 'Lead Times',     icon: '⏱️' },
+  { to: '/margins',     label: 'Margins',        icon: '💹' },
+  { to: '/trends',      label: 'Inventory Trends', icon: '📉' },
   { to: '/reorder',     label: 'Reorder Alerts', icon: '🔴' },
 ];
 

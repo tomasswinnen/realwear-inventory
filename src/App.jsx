@@ -17,6 +17,11 @@ const OnOrder = lazy(() => import('./pages/OnOrder').then(m => ({ default: m.OnO
 const DistributorStock = lazy(() => import('./pages/DistributorStock').then(m => ({ default: m.DistributorStock })));
 const SalesPipeline = lazy(() => import('./pages/SalesPipeline').then(m => ({ default: m.SalesPipeline })));
 const DistributorScorecard = lazy(() => import('./pages/DistributorScorecard').then(m => ({ default: m.DistributorScorecard })));
+const Backlog = lazy(() => import('./pages/Backlog').then(m => ({ default: m.Backlog })));
+const LeadTimes = lazy(() => import('./pages/LeadTimes').then(m => ({ default: m.LeadTimes })));
+const Margins = lazy(() => import('./pages/Margins').then(m => ({ default: m.Margins })));
+const Trends = lazy(() => import('./pages/Trends').then(m => ({ default: m.Trends })));
+const Serials = lazy(() => import('./pages/Serials').then(m => ({ default: m.Serials })));
 
 function PageFallback() {
   return (
@@ -58,6 +63,11 @@ export default function App() {
             <Route path="distributor-stock" element={<Suspense fallback={<PageFallback />}><DistributorStock /></Suspense>} />
             <Route path="sales-pipeline" element={<Suspense fallback={<PageFallback />}><SalesPipeline /></Suspense>} />
             <Route path="distributor-scorecard" element={<Suspense fallback={<PageFallback />}><DistributorScorecard /></Suspense>} />
+            <Route path="backlog" element={<Suspense fallback={<PageFallback />}><Backlog /></Suspense>} />
+            <Route path="lead-times" element={<Suspense fallback={<PageFallback />}><LeadTimes /></Suspense>} />
+            <Route path="margins" element={<Suspense fallback={<PageFallback />}><Margins /></Suspense>} />
+            <Route path="trends" element={<Suspense fallback={<PageFallback />}><Trends /></Suspense>} />
+            <Route path="serials" element={<Suspense fallback={<PageFallback />}><Serials /></Suspense>} />
           </Route>
         </Routes>
       </ErrorBoundary>
