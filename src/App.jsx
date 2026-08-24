@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Skeleton } from './components/Skeleton';
 import { Login } from './pages/Login';
+import { UpdatePassword } from './pages/UpdatePassword';
 import { useAuth } from './hooks/useAuth';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -50,6 +51,7 @@ export default function App() {
       <ErrorBoundary>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/update-password" element={<UpdatePassword />} />
           <Route element={<AuthGuard><Layout /></AuthGuard>}>
             <Route index element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
             <Route path="forecast" element={<Suspense fallback={<PageFallback />}><Forecast /></Suspense>} />
