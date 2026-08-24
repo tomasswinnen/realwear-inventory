@@ -135,7 +135,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes, marginRes, leadRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -158,6 +158,12 @@ async function fetchItem(sku) {
       .eq('sku', sku),
     supabase.from('distributor_stock').select('distributor, qty_on_hand, updated_at')
       .eq('sku', sku).order('qty_on_hand', { ascending: false }),
+    // Margen y lead time del SKU: tablas nuevas del pipeline (24/08). Si aún
+    // no existen en Supabase devuelven error y se degradan a null/[] — el
+    // resto de la página no se entera.
+    supabase.from('sku_margins').select('*').eq('sku', sku).maybeSingle(),
+    supabase.from('lead_times').select('po_number, vendor, po_date, receipt_date, dias')
+      .eq('sku', sku).order('receipt_date', { ascending: false }).limit(50),
   ]);
   console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
 
@@ -175,6 +181,8 @@ async function fetchItem(sku) {
     openPos: openPosRes.data ?? [],
     openTransferOrders: openTransferRes.data ?? [],
     distStock: distStockRes.data ?? [],
+    margin: marginRes?.data ?? null,
+    leadTimes: leadRes?.data ?? [],
   };
 }
 
@@ -311,6 +319,12 @@ export function ItemForecast() {
   const onOrder = computed?.onOrderEffective ?? snap.on_order ?? 0;
   const openTransferOrders = data?.openTransferOrders ?? [];
   const distStock = data?.distStock ?? [];
+  const margin = data?.margin ?? null;
+  const leadTimes = data?.leadTimes ?? [];
+  // mediana: robusta contra una recepción atrasada suelta (mismo criterio que
+  // la página Lead Times)
+  const leadDias = leadTimes.map(l => l.dias).filter(d => d != null).sort((a, b) => a - b);
+  const leadMediana = leadDias.length ? leadDias[Math.floor(leadDias.length / 2)] : null;
   const distStockTotal = distStock.reduce((s, r) => s + (r.qty_on_hand ?? 0), 0);
 
   // KPI card definitions
@@ -374,6 +388,28 @@ export function ItemForecast() {
       label: 'On Hand Value',
       value: computed ? formatCurrency(computed.invValue) : null,
       valueClass: 'text-success',
+    },
+    {
+      label: 'Margin (90d)',
+      value: sku && !loading
+        ? (margin?.margin_pct != null ? `${margin.margin_pct.toFixed(1)}%` : '—')
+        : null,
+      valueClass: margin?.margin_pct == null ? 'text-muted'
+        : margin.margin_pct < 0 ? 'text-danger'
+        : margin.margin_pct < 20 ? 'text-warning' : 'text-success',
+      sub: margin?.avg_price != null
+        ? `sell ${formatCurrency(margin.avg_price)} · cost ${margin.avg_cost != null ? formatCurrency(margin.avg_cost) : '—'}`
+        : 'no sales in 90d',
+    },
+    {
+      label: 'Lead Time',
+      value: sku && !loading
+        ? (leadMediana != null ? `${leadMediana} days` : '—')
+        : null,
+      valueClass: 'text-white',
+      sub: leadDias.length
+        ? `median of ${leadDias.length} receipts since 2024`
+        : 'no receipts measured',
     },
   ];
 
@@ -878,6 +914,55 @@ export function ItemForecast() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── Lead Times: recepciones reales de este SKU ── */}
+      {sku && !loading && leadTimes.length > 0 && (
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ background: '#162030', border: '1px solid rgba(148,163,184,0.08)' }}
+        >
+          <div
+            className="px-5 py-3 border-b flex items-center justify-between"
+            style={{ borderColor: 'rgba(148,163,184,0.08)' }}
+          >
+            <h3 className="text-sm font-sans font-semibold text-white">Receipts &amp; Lead Times</h3>
+            <span className="text-xs font-mono text-muted">
+              median {leadMediana} days · {leadDias.length} receipts
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                  {['PO Number', 'Vendor', 'Ordered', 'Received', 'Days'].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {leadTimes.slice(0, 10).map((l, i) => (
+                  <tr key={`${l.po_number}-${i}`}
+                    style={{ borderBottom: i < Math.min(leadTimes.length, 10) - 1 ? '1px solid rgba(148,163,184,0.04)' : 'none' }}
+                    className="hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-2.5 font-mono text-slate-300">{l.po_number}</td>
+                    <td className="px-4 py-2.5 text-muted font-sans max-w-[220px] truncate" title={l.vendor ?? undefined}>{l.vendor ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-400 whitespace-nowrap">{l.po_date}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-400 whitespace-nowrap">{l.receipt_date}</td>
+                    <td className={`px-4 py-2.5 font-mono ${leadMediana != null && l.dias > leadMediana * 1.5 ? 'text-warning' : 'text-white'}`}>
+                      {l.dias != null ? l.dias : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {leadTimes.length > 10 && (
+            <p className="px-4 py-2 text-[10px] text-muted font-mono border-t" style={{ borderColor: 'rgba(148,163,184,0.06)' }}>
+              Showing latest 10 of {leadTimes.length} — full detail in the Lead Times page.
+            </p>
+          )}
         </div>
       )}
 
