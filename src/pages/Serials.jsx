@@ -12,20 +12,24 @@ import { isValidSku } from '../utils/coverage';
 //
 // La búsqueda es SERVER-SIDE a propósito: hay miles de filas y PostgREST corta
 // en 1000 por respuesta, así que filtrar en el browser perdería resultados.
+// Armar la consulta base (la usan la vista y el export). withSo=false es el
+// fallback para cuando la columna so_number todavía no existe.
+function armarConsulta(q, withSo) {
+  let query = supabase.from('serial_shipments').select('*');
+  if (q) {
+    const like = `%${q}%`;
+    const terms = [
+      `serial.ilike.${like}`, `cliente.ilike.${like}`,
+      `doc_number.ilike.${like}`, `sku.ilike.${like}`,
+    ];
+    if (withSo) terms.push(`so_number.ilike.${like}`);
+    query = query.or(terms.join(','));
+  }
+  return query.order('fecha', { ascending: false });
+}
+
 async function fetchSerials(q) {
-  const build = withSo => {
-    let query = supabase.from('serial_shipments').select('*');
-    if (q) {
-      const like = `%${q}%`;
-      const terms = [
-        `serial.ilike.${like}`, `cliente.ilike.${like}`,
-        `doc_number.ilike.${like}`, `sku.ilike.${like}`,
-      ];
-      if (withSo) terms.push(`so_number.ilike.${like}`);
-      query = query.or(terms.join(','));
-    }
-    return query.order('fecha', { ascending: false });
-  };
+  const build = withSo => armarConsulta(q, withSo);
 
   // Paginado: PostgREST corta en 1000 filas por respuesta y UN solo
   // fulfillment masivo (600 seriales de una) puede comerse casi toda esa
@@ -58,6 +62,47 @@ const DOC_LABEL = {
   CashSale: 'Cash Sale',
 };
 
+// Exportar a Excel: baja TODO lo que matchea la búsqueda actual — o la tabla
+// completa si no hay búsqueda (~160k filas, tarda un par de minutos) — y arma
+// un .xlsx de verdad. SheetJS se carga recién acá (import dinámico), así que
+// no infla la página para quien nunca exporta.
+async function exportarExcel(q, descBySku, onProgreso) {
+  const XLSX = await import('xlsx');
+  const filas = [];
+  let conSo = true;
+  for (let desde = 0; desde < 300000; desde += 1000) {
+    let res = await armarConsulta(q, conSo).range(desde, desde + 999);
+    if (res.error && conSo && /so_number/i.test(res.error.message)) {
+      conSo = false;
+      res = await armarConsulta(q, false).range(desde, desde + 999);
+    }
+    if (res.error) throw new Error(res.error.message);
+    const lote = res.data ?? [];
+    filas.push(...lote);
+    onProgreso(filas.length);
+    if (lote.length < 1000) break;
+  }
+
+  const datos = filas.map(r => ({
+    'Serial': r.serial,
+    'Item': r.sku,
+    'Item Name': descBySku[r.sku] ?? '',
+    'Sales Order': r.so_number ?? '',
+    'Doc Type': DOC_LABEL[r.doc_type] ?? r.doc_type,
+    'Doc Number': r.doc_number,
+    'Date': r.fecha,
+    'Customer': r.cliente ?? '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(datos);
+  ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 34 }, { wch: 12 },
+                 { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 32 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Serial Numbers');
+  const hoy = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, q ? `serials_${q.replace(/[^\w-]+/g, '_')}_${hoy}.xlsx` : `serials_completo_${hoy}.xlsx`);
+  return filas.length;
+}
+
 function Chevron({ open }) {
   return (
     <svg className={`w-3.5 h-3.5 inline-block transition-transform ${open ? 'rotate-90' : ''}`}
@@ -71,6 +116,8 @@ export function Serials() {
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
   const [abiertas, setAbiertas] = useState(() => new Set());
+  const [exportando, setExportando] = useState(null); // null | filas bajadas
+  const [errorExport, setErrorExport] = useState('');
   const { data, loading, error, refetch } = useQuery(() => fetchSerials(q), [q]);
 
   const toggle = k => setAbiertas(prev => {
@@ -126,6 +173,18 @@ export function Serials() {
     setQ(input.trim());
   };
 
+  const exportar = async () => {
+    if (exportando != null) return;
+    setExportando(0);
+    setErrorExport('');
+    try {
+      await exportarExcel(q, descBySku, setExportando);
+    } catch (e) {
+      setErrorExport(`Export failed: ${e.message}`);
+    }
+    setExportando(null);
+  };
+
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
   return (
@@ -153,12 +212,21 @@ export function Serials() {
             Clear
           </button>
         )}
+        <button type="button" onClick={exportar} disabled={exportando != null}
+          title={q ? `Exporta todo lo que matchea "${q}"` : 'Exporta la tabla completa (~160k filas, tarda un par de minutos)'}
+          className="px-4 py-2 rounded border border-white/[0.12] text-xs font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
+          {exportando != null
+            ? `Exporting… ${exportando.toLocaleString()} rows`
+            : 'Export Excel'}
+        </button>
         {!loading && (
           <span className="ml-auto text-xs font-mono text-muted">
             {q ? `${ordenes.length} orders matching "${q}"` : `latest ${ordenes.length} orders`}
           </span>
         )}
       </form>
+
+      {errorExport && <p className="text-xs font-mono text-danger">{errorExport}</p>}
 
       {loading ? <TableSkeleton rows={10} cols={5} /> : (
         <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
