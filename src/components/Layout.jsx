@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase';
 const NAV_SECTIONS = [
   { section: null, items: [
     { to: '/',            label: 'Dashboard',       icon: '⬛' },
+    { to: '/executive',   label: 'Executive Summary', icon: '📊' },
   ]},
   { section: 'Planning', items: [
     { to: '/forecast',    label: 'Demand Forecast', icon: '📈' },
@@ -16,6 +17,7 @@ const NAV_SECTIONS = [
   { section: 'Inventory', items: [
     { to: '/locations',   label: 'By Location',     icon: '📍' },
     { to: '/trends',      label: 'Inventory Trends', icon: '📉' },
+    { to: '/slow-movers', label: 'Slow Movers',     icon: '🐢' },
     { to: '/open-transfer-orders', label: 'Transfer Orders', icon: '🔁' },
   ]},
   { section: 'Purchasing', items: [
@@ -24,6 +26,7 @@ const NAV_SECTIONS = [
     { to: '/lead-times',  label: 'Lead Times',      icon: '⏱️' },
   ]},
   { section: 'Sales', items: [
+    { to: '/customers',   label: 'Customers',       icon: '👥' },
     { to: '/backlog',     label: 'Open Sales Orders', icon: '🧾' },
     { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
     { to: '/margins',     label: 'Margins',         icon: '💹' },
@@ -32,6 +35,7 @@ const NAV_SECTIONS = [
   ]},
   { section: 'Support', items: [
     { to: '/serials',     label: 'Serial Numbers',  icon: '🔢' },
+    { to: '/rmas',        label: 'RMAs / Returns',  icon: '↩️' },
   ]},
 ];
 

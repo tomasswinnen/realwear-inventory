@@ -23,6 +23,10 @@ const LeadTimes = lazy(() => import('./pages/LeadTimes').then(m => ({ default: m
 const Margins = lazy(() => import('./pages/Margins').then(m => ({ default: m.Margins })));
 const Trends = lazy(() => import('./pages/Trends').then(m => ({ default: m.Trends })));
 const Serials = lazy(() => import('./pages/Serials').then(m => ({ default: m.Serials })));
+const Customers = lazy(() => import('./pages/Customers').then(m => ({ default: m.Customers })));
+const Rmas = lazy(() => import('./pages/Rmas').then(m => ({ default: m.Rmas })));
+const SlowMovers = lazy(() => import('./pages/SlowMovers').then(m => ({ default: m.SlowMovers })));
+const Executive = lazy(() => import('./pages/Executive').then(m => ({ default: m.Executive })));
 
 function PageFallback() {
   return (
@@ -70,6 +74,10 @@ export default function App() {
             <Route path="margins" element={<Suspense fallback={<PageFallback />}><Margins /></Suspense>} />
             <Route path="trends" element={<Suspense fallback={<PageFallback />}><Trends /></Suspense>} />
             <Route path="serials" element={<Suspense fallback={<PageFallback />}><Serials /></Suspense>} />
+            <Route path="customers" element={<Suspense fallback={<PageFallback />}><Customers /></Suspense>} />
+            <Route path="rmas" element={<Suspense fallback={<PageFallback />}><Rmas /></Suspense>} />
+            <Route path="slow-movers" element={<Suspense fallback={<PageFallback />}><SlowMovers /></Suspense>} />
+            <Route path="executive" element={<Suspense fallback={<PageFallback />}><Executive /></Suspense>} />
           </Route>
         </Routes>
       </ErrorBoundary>
