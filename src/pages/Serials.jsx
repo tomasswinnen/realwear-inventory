@@ -24,14 +24,31 @@ async function fetchSerials(q) {
       if (withSo) terms.push(`so_number.ilike.${like}`);
       query = query.or(terms.join(','));
     }
-    return query.order('fecha', { ascending: false }).limit(1000);
+    return query.order('fecha', { ascending: false });
   };
-  // so_number es columna nueva: si todavía no existe (SQL pendiente), se
-  // reintenta la búsqueda sin ella en vez de romper la página.
-  let res = await build(true);
-  if (res.error && /so_number/i.test(res.error.message)) res = await build(false);
-  if (res.error) throw new Error(res.error.message);
-  return res.data ?? [];
+
+  // Paginado: PostgREST corta en 1000 filas por respuesta y UN solo
+  // fulfillment masivo (600 seriales de una) puede comerse casi toda esa
+  // ventana, dejando la vista en un puñado de órdenes. Se traen hasta 5
+  // páginas (5000 eventos) para que la vista por defecto cubra semanas
+  // incluso con envíos gigantes en el medio.
+  const PAGINA = 1000, TOPE = 5000;
+  let conSo = true;
+  const filas = [];
+  for (let desde = 0; desde < TOPE; desde += PAGINA) {
+    let res = await build(conSo).range(desde, desde + PAGINA - 1);
+    // so_number es columna nueva: si todavía no existe (SQL pendiente), se
+    // reintenta la búsqueda sin ella en vez de romper la página.
+    if (res.error && conSo && /so_number/i.test(res.error.message)) {
+      conSo = false;
+      res = await build(false).range(desde, desde + PAGINA - 1);
+    }
+    if (res.error) throw new Error(res.error.message);
+    const lote = res.data ?? [];
+    filas.push(...lote);
+    if (lote.length < PAGINA) break;
+  }
+  return filas;
 }
 
 const DOC_LABEL = {
