@@ -36,25 +36,6 @@ async function fetchBacklog() {
   return { rows, skus: skusRes.data ?? [], tracking };
 }
 
-// Tracking de CUALQUIER orden (cerradas incluidas): so_tracking guarda 18
-// meses de despachos, no solo el backlog. Se consulta recién con 4+ letras.
-async function buscarTrackingCerradas(q) {
-  const s = q.trim();
-  if (s.length < 4) return [];
-  const like = `%${s}%`;
-  const res = await supabase.from('so_tracking')
-    .select('so_number, fulfillment, ship_date, tracking')
-    .or(`so_number.ilike.${like},tracking.ilike.${like}`)
-    .order('ship_date', { ascending: false })
-    .limit(20);
-  return res.error ? [] : res.data ?? [];
-}
-
-function diasDesde(fecha) {
-  if (!fecha) return null;
-  return Math.max(0, Math.floor((Date.now() - new Date(fecha + 'T00:00:00')) / 86400000));
-}
-
 function Chevron({ open }) {
   return (
     <svg className={`w-3.5 h-3.5 inline-block transition-transform ${open ? 'rotate-90' : ''}`}
@@ -69,7 +50,6 @@ export function Backlog() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [abiertos, setAbiertos] = useState(() => new Set());
-  const { data: cerradas } = useQuery(() => buscarTrackingCerradas(search), [search]);
 
   const toggle = so => setAbiertos(prev => {
     const next = new Set(prev);
@@ -100,7 +80,6 @@ export function Backlog() {
       if (!porSo.has(so)) {
         porSo.set(so, {
           so, so_date: r.so_date, customer: r.customer, status: r.status,
-          dias: diasDesde(r.so_date),
           lineas: [], qtyOpen: 0, valueOpen: 0,
           tracking: trackBySo.get(so) ?? [],
         });
@@ -180,14 +159,14 @@ export function Backlog() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['SO Number', 'Date', 'Days Open', 'Customer', 'Status', 'Lines', 'Qty Open', 'Value Open', 'Tracking'].map(h => (
+                  {['SO Number', 'Date', 'Customer', 'Status', 'Lines', 'Qty Open', 'Value Open', 'Tracking'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {ordenes.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted font-mono">No open backlog</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-muted font-mono">No open backlog</td></tr>
                 ) : ordenes.map(g => (
                   <SoRow key={g.so} g={g} open={abiertos.has(g.so)} onToggle={() => toggle(g.so)} />
                 ))}
@@ -198,28 +177,6 @@ export function Backlog() {
             Tracking numbers appear once NetSuite has a shipped fulfillment for the order.
             Search also matches tracking numbers.
           </p>
-        </div>
-      )}
-
-      {/* Tracking de órdenes YA DESPACHADAS (cerradas): no están en la tabla de
-          arriba, pero su tracking sigue siendo consultable */}
-      {search.trim().length >= 4 && (cerradas ?? []).filter(t => !ordenes.some(g => g.so === t.so_number)).length > 0 && (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
-          <p className="px-4 pt-3 pb-1 text-[10px] text-muted font-sans font-medium uppercase tracking-wider">
-            Shipped / closed orders matching "{search.trim()}"
-          </p>
-          <table className="w-full text-xs">
-            <tbody>
-              {(cerradas ?? []).filter(t => !ordenes.some(g => g.so === t.so_number)).map((t, i) => (
-                <tr key={i} className="border-t border-white/[0.04]">
-                  <td className="px-4 py-2 font-mono text-white">{t.so_number}</td>
-                  <td className="px-4 py-2 font-mono text-muted">{t.fulfillment}</td>
-                  <td className="px-4 py-2 font-mono text-muted">{t.ship_date}</td>
-                  <td className="px-4 py-2 font-mono text-slate-300">{t.tracking}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </div>
@@ -238,13 +195,6 @@ function SoRow({ g, open, onToggle }) {
           {g.so}
         </td>
         <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{g.so_date}</td>
-        <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-          {g.dias == null ? <span className="text-muted">—</span> : (
-            <span className={g.dias > 60 ? 'text-danger' : g.dias > 30 ? 'text-warning' : 'text-slate-300'}>
-              {g.dias} d
-            </span>
-          )}
-        </td>
         <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[240px] truncate" title={g.customer}>{g.customer}</td>
         <td className="px-4 py-2.5"><StatusBadge status={g.status} /></td>
         <td className="px-4 py-2.5 font-mono text-muted">{g.lineas.length}</td>
@@ -258,7 +208,7 @@ function SoRow({ g, open, onToggle }) {
       </tr>
       {open && (
         <tr className="border-b border-white/[0.04] bg-white/[0.015]">
-          <td colSpan={9} className="px-6 py-3">
+          <td colSpan={8} className="px-6 py-3">
             <table className="w-full text-xs mb-1">
               <thead>
                 <tr>

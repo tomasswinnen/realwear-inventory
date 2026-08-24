@@ -52,15 +52,6 @@ async function fetchSerials(q) {
   return { rows: filas, skus: skusRes.data ?? [] };
 }
 
-// Edad desde el despacho físico: el dato que soporte necesita para saber al
-// toque si un equipo está en garantía (que se cuenta desde el ship date).
-function mesesDesde(fecha) {
-  if (!fecha) return null;
-  const d = new Date(fecha + 'T00:00:00');
-  const hoy = new Date();
-  return Math.max(0, (hoy.getFullYear() - d.getFullYear()) * 12 + (hoy.getMonth() - d.getMonth()));
-}
-
 const DOC_LABEL = {
   ItemShip: 'Fulfillment',
   CustInvc: 'Invoice',
@@ -233,17 +224,13 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
             <table className="w-full text-xs">
               <thead>
                 <tr>
-                  {['Serial', 'SKU', 'Documents', 'Shipped · Age'].map(h => (
+                  {['Serial', 'SKU', 'Documents'].map(h => (
                     <th key={h} className="px-3 py-1.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[9px]">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {g.seriales.map(s => {
-                  const ship = s.eventos.filter(e => e.doc_type === 'ItemShip').map(e => e.fecha).sort()[0]
-                    ?? s.eventos[0]?.fecha;
-                  const meses = mesesDesde(ship);
-                  return (
+                {g.seriales.map(s => (
                   <tr key={s.serial} className="border-t border-white/[0.04] align-top">
                     <td className="px-3 py-1.5 font-mono text-white whitespace-nowrap">{s.serial}</td>
                     <td className="px-3 py-1.5 max-w-[280px]">
@@ -267,14 +254,8 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
                         ))}
                       </div>
                     </td>
-                    <td className="px-3 py-1.5 font-mono whitespace-nowrap">
-                      {ship
-                        ? <span className="text-slate-300">{ship} <span className="text-muted">· {meses} mo</span></span>
-                        : <span className="text-muted">—</span>}
-                    </td>
                   </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
           </td>
