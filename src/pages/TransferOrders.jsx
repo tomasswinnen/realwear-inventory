@@ -15,13 +15,17 @@ function formatLocationDisplay(location) {
 }
 
 async function fetchOpenTransferOrders() {
-  const ordersRes = await excludeSkus(
-    supabase.from('open_transfer_orders')
-      .select('transfer_order_number, transfer_date, vendor, sku, status, origin_location, destination_location, qty_ordered, qty_open, unit_price, amount_remaining')
-      .order('transfer_date', { ascending: false })
-  );
+  const [ordersRes, skusRes] = await Promise.all([
+    excludeSkus(
+      supabase.from('open_transfer_orders')
+        .select('transfer_order_number, transfer_date, vendor, sku, status, origin_location, destination_location, qty_ordered, qty_open, unit_price, amount_remaining')
+        .order('transfer_date', { ascending: false })
+    ),
+    excludeSkus(supabase.from('skus').select('sku, description')),
+  ]);
   if (ordersRes.error) throw new Error(ordersRes.error.message);
-  return { orders: ordersRes.data };
+  const descBySku = Object.fromEntries((skusRes.data ?? []).map(s => [s.sku, s.description]));
+  return { orders: (ordersRes.data ?? []).map(o => ({ ...o, description: descBySku[o.sku] ?? '' })) };
 }
 
 export function TransferOrders() {
@@ -35,6 +39,7 @@ export function TransferOrders() {
       .filter(order =>
         !search ||
         order.sku?.toLowerCase().includes(q) ||
+        order.description?.toLowerCase().includes(q) ||
         order.vendor?.toLowerCase().includes(q) ||
         order.transfer_order_number?.toLowerCase().includes(q) ||
         order.status?.toLowerCase().includes(q)
@@ -89,8 +94,11 @@ export function TransferOrders() {
                     <tr key={order.transfer_order_number} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-3 py-2.5 font-mono text-accent">{order.transfer_order_number}</td>
                       <td className="px-3 py-2.5 font-mono text-muted">{order.transfer_date ?? '—'}</td>
-                      <td className="px-3 py-2.5 align-top">
+                      <td className="px-3 py-2.5 align-top max-w-[260px]">
                         <Link to={`/item/${order.sku}`} className="font-mono text-accent hover:text-accent/80">{order.sku}</Link>
+                        {order.description && (
+                          <p className="text-[10px] text-muted font-sans truncate" title={order.description}>{order.description}</p>
+                        )}
                         {(order.origin_location || order.destination_location) && (
                           <div className="mt-1 text-[11px] text-slate-400 font-sans leading-tight">
                             <span>{formatLocationDisplay(order.origin_location)}</span>

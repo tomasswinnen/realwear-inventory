@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
@@ -48,7 +48,8 @@ async function fetchSerials(q) {
     filas.push(...lote);
     if (lote.length < PAGINA) break;
   }
-  return filas;
+  const skusRes = await excludeSkus(supabase.from('skus').select('sku, description'));
+  return { rows: filas, skus: skusRes.data ?? [] };
 }
 
 const DOC_LABEL = {
@@ -82,10 +83,11 @@ export function Serials() {
   // sus eventos (fulfillment + factura del mismo equipo), después se agrupan
   // los seriales bajo su sales order. Si un evento no tiene SO (cash sale, o
   // datos anteriores a la columna so_number), la orden es el documento mismo.
-  const ordenes = useMemo(() => {
-    if (!data) return [];
+  const { ordenes, descBySku } = useMemo(() => {
+    if (!data) return { ordenes: [], descBySku: {} };
+    const descBySku = Object.fromEntries(data.skus.map(s => [s.sku, s.description]));
     const porSerial = new Map();
-    for (const r of data) {
+    for (const r of data.rows) {
       if (!porSerial.has(r.serial)) {
         porSerial.set(r.serial, { serial: r.serial, sku: r.sku, eventos: [] });
       }
@@ -113,9 +115,10 @@ export function Serials() {
       if (s.sku) g.skus.add(s.sku);
       if (ultimo.fecha > g.fecha) g.fecha = ultimo.fecha;
     }
-    return [...porOrden.values()]
+    const ordenes = [...porOrden.values()]
       .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
       .slice(0, 300);
+    return { ordenes, descBySku };
   }, [data]);
 
   const buscar = e => {
@@ -174,7 +177,8 @@ export function Serials() {
                     {q ? `Nothing matches "${q}"` : 'No serial data yet — runs with the pipeline'}
                   </td></tr>
                 ) : ordenes.map(g => (
-                  <OrdenRow key={g.clave} g={g} open={abiertas.has(g.clave)} onToggle={() => toggle(g.clave)} />
+                  <OrdenRow key={g.clave} g={g} descBySku={descBySku}
+                    open={abiertas.has(g.clave)} onToggle={() => toggle(g.clave)} />
                 ))}
               </tbody>
             </table>
@@ -189,7 +193,10 @@ export function Serials() {
   );
 }
 
-function OrdenRow({ g, open, onToggle }) {
+function OrdenRow({ g, descBySku, open, onToggle }) {
+  // "SKU — nombre" en todos lados: el código solo no le dice nada a nadie
+  // fuera de supply chain.
+  const etiqueta = sku => (descBySku[sku] ? `${sku} — ${descBySku[sku]}` : sku);
   return (
     <>
       <tr
@@ -205,8 +212,9 @@ function OrdenRow({ g, open, onToggle }) {
           {g.cliente ?? '—'}
         </td>
         <td className="px-4 py-2.5 font-mono text-white">{g.seriales.length}</td>
-        <td className="px-4 py-2.5 font-mono text-muted max-w-[220px] truncate" title={[...g.skus].join(', ')}>
-          {[...g.skus].join(', ') || '—'}
+        <td className="px-4 py-2.5 font-mono text-muted max-w-[320px] truncate"
+          title={[...g.skus].map(etiqueta).join('\n')}>
+          {[...g.skus].map(etiqueta).join(' · ') || '—'}
         </td>
         <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{g.fecha}</td>
       </tr>
@@ -225,10 +233,15 @@ function OrdenRow({ g, open, onToggle }) {
                 {g.seriales.map(s => (
                   <tr key={s.serial} className="border-t border-white/[0.04] align-top">
                     <td className="px-3 py-1.5 font-mono text-white whitespace-nowrap">{s.serial}</td>
-                    <td className="px-3 py-1.5">
+                    <td className="px-3 py-1.5 max-w-[280px]">
                       {isValidSku(s.sku)
                         ? <Link to={`/item/${s.sku}`} onClick={e => e.stopPropagation()} className="font-mono text-accent hover:text-accent/80">{s.sku}</Link>
                         : <span className="font-mono text-muted">{s.sku}</span>}
+                      {descBySku[s.sku] && (
+                        <p className="text-[10px] text-muted font-sans truncate" title={descBySku[s.sku]}>
+                          {descBySku[s.sku]}
+                        </p>
+                      )}
                     </td>
                     <td className="px-3 py-1.5">
                       <div className="space-y-0.5">

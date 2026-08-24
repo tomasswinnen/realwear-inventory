@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
@@ -11,10 +11,12 @@ import { isValidSku } from '../utils/coverage';
 // medido de las transacciones (no el lead_time_days configurado a mano en el
 // catálogo). Fuente: tabla lead_times, una fila por recepción desde 2024.
 async function fetchLeadTimes() {
-  const res = await supabase.from('lead_times').select('*')
-    .order('receipt_date', { ascending: false });
+  const [res, skusRes] = await Promise.all([
+    supabase.from('lead_times').select('*').order('receipt_date', { ascending: false }),
+    excludeSkus(supabase.from('skus').select('sku, description')),
+  ]);
   if (res.error) throw new Error(res.error.message);
-  return res.data ?? [];
+  return { rows: res.data ?? [], skus: skusRes.data ?? [] };
 }
 
 function agrupar(rows, clave) {
@@ -48,16 +50,17 @@ export function LeadTimes() {
   const { data, loading, error, refetch } = useQuery(fetchLeadTimes, []);
   const [por, setPor] = useState('sku');
 
-  const { grupos, kpis } = useMemo(() => {
-    if (!data) return { grupos: [], kpis: null };
-    const grupos = agrupar(data, por);
-    const todos = data.filter(r => r.dias != null).map(r => r.dias).sort((a, b) => a - b);
+  const { grupos, kpis, descBySku } = useMemo(() => {
+    if (!data) return { grupos: [], kpis: null, descBySku: {} };
+    const descBySku = Object.fromEntries(data.skus.map(s => [s.sku, s.description]));
+    const grupos = agrupar(data.rows, por);
+    const todos = data.rows.filter(r => r.dias != null).map(r => r.dias).sort((a, b) => a - b);
     const kpis = {
       recepciones: todos.length,
       mediana: todos.length ? todos[Math.floor(todos.length / 2)] : null,
       promedio: todos.length ? Math.round(todos.reduce((s, x) => s + x, 0) / todos.length) : null,
     };
-    return { grupos, kpis };
+    return { grupos, kpis, descBySku };
   }, [data, por]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
@@ -103,10 +106,15 @@ export function LeadTimes() {
               <tbody>
                 {grupos.map(g => (
                   <tr key={g.clave} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                    <td className="px-4 py-2.5 max-w-[280px] truncate" title={g.clave}>
+                    <td className="px-4 py-2.5 max-w-[320px]">
                       {por === 'sku' && isValidSku(g.clave)
                         ? <Link to={`/item/${g.clave}`} className="font-mono text-accent hover:text-accent/80">{g.clave}</Link>
                         : <span className="font-sans text-slate-300">{g.clave}</span>}
+                      {por === 'sku' && descBySku[g.clave] && (
+                        <p className="text-[10px] text-muted font-sans truncate" title={descBySku[g.clave]}>
+                          {descBySku[g.clave]}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-muted">{g.n}</td>
                     <td className="px-4 py-2.5 font-mono text-white">{g.p50 != null ? `${g.p50} d` : '—'}</td>
