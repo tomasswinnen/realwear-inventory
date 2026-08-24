@@ -2,24 +2,41 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-const NAV = [
-  { to: '/',            label: 'Dashboard',      icon: '⬛' },
-  { to: '/forecast',    label: 'Demand Forecast', icon: '📈' },
-  { to: '/locations',   label: 'By Location',    icon: '📍' },
-  { to: '/item',        label: 'Item Forecast',  icon: '🔍' },
-  { to: '/po-history',  label: 'PO History',     icon: '📋' },
-  { to: '/on-order',    label: 'On Order',       icon: '📦' },
-  { to: '/open-transfer-orders', label: 'Open Transfer Orders', icon: '🔁' },
-  { to: '/distributor-stock', label: 'Distributor Stock', icon: '🏬' },
-  { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
-  { to: '/distributor-scorecard', label: 'Distributor Scorecard', icon: '🧮' },
-  { to: '/backlog',     label: 'Sales Backlog',  icon: '🧾' },
-  { to: '/serials',     label: 'Serial Numbers', icon: '🔢' },
-  { to: '/lead-times',  label: 'Lead Times',     icon: '⏱️' },
-  { to: '/margins',     label: 'Margins',        icon: '💹' },
-  { to: '/trends',      label: 'Inventory Trends', icon: '📉' },
-  { to: '/reorder',     label: 'Reorder Alerts', icon: '🔴' },
+// Menú agrupado por área de trabajo. `section: null` va arriba, sin título.
+// El orden dentro de cada grupo es "lo que más se abre, primero".
+const NAV_SECTIONS = [
+  { section: null, items: [
+    { to: '/',            label: 'Dashboard',       icon: '⬛' },
+  ]},
+  { section: 'Planning', items: [
+    { to: '/forecast',    label: 'Demand Forecast', icon: '📈' },
+    { to: '/item',        label: 'Item Forecast',   icon: '🔍' },
+    { to: '/reorder',     label: 'Reorder Alerts',  icon: '🔴' },
+  ]},
+  { section: 'Inventory', items: [
+    { to: '/locations',   label: 'By Location',     icon: '📍' },
+    { to: '/trends',      label: 'Inventory Trends', icon: '📉' },
+    { to: '/open-transfer-orders', label: 'Transfer Orders', icon: '🔁' },
+  ]},
+  { section: 'Purchasing', items: [
+    { to: '/on-order',    label: 'On Order',        icon: '📦' },
+    { to: '/po-history',  label: 'PO History',      icon: '📋' },
+    { to: '/lead-times',  label: 'Lead Times',      icon: '⏱️' },
+  ]},
+  { section: 'Sales', items: [
+    { to: '/backlog',     label: 'Open Sales Orders', icon: '🧾' },
+    { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
+    { to: '/margins',     label: 'Margins',         icon: '💹' },
+    { to: '/distributor-stock', label: 'Distributor Stock', icon: '🏬' },
+    { to: '/distributor-scorecard', label: 'Distributor Scorecard', icon: '🧮' },
+  ]},
+  { section: 'Support', items: [
+    { to: '/serials',     label: 'Serial Numbers',  icon: '🔢' },
+  ]},
 ];
+
+// Lista plana para el título del topbar en mobile.
+const NAV = NAV_SECTIONS.flatMap(s => s.items);
 
 function NavIcon({ icon }) {
   return <span className="w-4 h-4 text-base leading-none select-none">{icon}</span>;
@@ -66,18 +83,27 @@ export function Layout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5">
-          {NAV.map(({ to, label, icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={navLinkClass}
-              onClick={() => setSidebarOpen(false)}
-            >
-              <NavIcon icon={icon} />
-              {label}
-            </NavLink>
+        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+          {NAV_SECTIONS.map(({ section, items }) => (
+            <div key={section ?? 'top'}>
+              {section && (
+                <p className="px-3 pt-4 pb-1 text-[10px] text-muted font-mono uppercase tracking-widest select-none">
+                  {section}
+                </p>
+              )}
+              {items.map(({ to, label, icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === '/'}
+                  className={navLinkClass}
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <NavIcon icon={icon} />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 

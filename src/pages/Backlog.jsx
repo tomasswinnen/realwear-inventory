@@ -119,7 +119,7 @@ export function Backlog() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-sans font-semibold text-white">Sales Backlog</h1>
+        <h1 className="text-xl font-sans font-semibold text-white">Open Sales Orders</h1>
         <p className="text-xs text-muted font-mono mt-0.5">Open sales orders — click one to see its lines and tracking</p>
       </div>
 
