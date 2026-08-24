@@ -17,7 +17,7 @@ import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '.
 
 
 async function fetchDashboardData() {
-  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes, distStockFreshRes, pipelineFreshRes] = await Promise.all([
+  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes, distStockFreshRes, pipelineFreshRes, runRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at').order('updated_at', { ascending: false })),
@@ -27,6 +27,12 @@ async function fetchDashboardData() {
     excludeSkus(supabase.from('monthly_sales').select('sku, month').gt('qty_sold', 0).order('month', { ascending: false })),
     supabase.from('distributor_stock').select('updated_at').order('updated_at', { ascending: false }).limit(1),
     supabase.from('sales_pipeline').select('updated_at').order('updated_at', { ascending: false }).limit(1),
+    // Hora exacta de la última corrida del pipeline. Las columnas updated_at de
+    // las otras tablas son de tipo `date`, así que de ahí sale el día pero no la
+    // hora. Si la tabla no existe todavía (falta correr SQL_pipeline_runs.sql),
+    // esto devuelve error y se ignora: el resto del dashboard funciona igual.
+    supabase.from('pipeline_runs').select('finished_at').eq('ok', true)
+      .order('finished_at', { ascending: false }).limit(1),
   ]);
 
   console.log('open_pos query result:', poRes.data, poRes.error);
@@ -46,6 +52,10 @@ async function fetchDashboardData() {
     snapshotUpdated: snapshotRes.data?.[0]?.updated_at ?? null,
     distStockUpdated: distStockFreshRes.data?.[0]?.updated_at ?? null,
     pipelineUpdated: pipelineFreshRes.data?.[0]?.updated_at?.slice(0, 10) ?? null,
+    // Timestamp completo: DataFreshness le agrega la hora cuando lo detecta.
+    // Cae en null si pipeline_runs no existe o todavía no tiene corridas, y en
+    // ese caso ese indicador simplemente no se muestra.
+    lastRun: runRes?.data?.[0]?.finished_at ?? null,
   };
 }
 
@@ -201,6 +211,9 @@ export function Dashboard() {
         {!loading && (
           <DataFreshness
             sources={[
+              // 'Last sync' va primero: es el único con hora, y es el que dice
+              // si el pipeline de las 09:00 efectivamente corrió hoy.
+              ...(data.lastRun ? [{ label: 'Last sync', date: data.lastRun }] : []),
               { label: 'Inventory', date: data.snapshotUpdated },
               { label: 'Distributor Stock', date: data.distStockUpdated },
               { label: 'Sales Pipeline', date: data.pipelineUpdated },
