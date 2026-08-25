@@ -30,6 +30,18 @@ async function fetchSoHistory() {
   const historia = await paginado(() =>
     supabase.from('so_history').select('*').order('so_date', { ascending: false }));
 
+  // Tracking numbers de cada orden (tabla chica, se trae entera)
+  let trackTodos = [];
+  try {
+    trackTodos = await paginado(() =>
+      supabase.from('so_tracking').select('so_number, tracking, ship_date'));
+  } catch { trackTodos = []; }
+  const trackBySo = new Map();
+  for (const t of trackTodos) {
+    if (!trackBySo.has(t.so_number)) trackBySo.set(t.so_number, []);
+    trackBySo.get(t.so_number).push(t);
+  }
+
   // Costos reales (fase 2). Tabla puede estar vacía o no existir todavía.
   let costos = [];
   try {
@@ -55,7 +67,7 @@ async function fetchSoHistory() {
     }
   }
 
-  return { historia, pagadoPorSo, hayCostos: costos.length > 0 };
+  return { historia, pagadoPorSo, trackBySo, hayCostos: costos.length > 0 };
 }
 
 export function SoHistory() {
@@ -71,13 +83,15 @@ export function SoHistory() {
       .map(r => ({
         ...r,
         pagado: data.pagadoPorSo.get(r.so_number) ?? null,
+        tracking: data.trackBySo.get(r.so_number) ?? [],
       }))
       .filter(r => {
         if (soloConEnvio && !(r.shipping_charged > 0) && r.pagado == null) return false;
         return !q
           || r.so_number?.toLowerCase().includes(q)
           || r.customer?.toLowerCase().includes(q)
-          || r.status?.toLowerCase().includes(q);
+          || r.status?.toLowerCase().includes(q)
+          || r.tracking.some(t => t.tracking?.toLowerCase().includes(q));
       });
 
     const kpis = {
@@ -103,6 +117,7 @@ export function SoHistory() {
         'Shipping Charged': r.shipping_charged,
         'Shipping Paid': r.pagado ?? '',
         'Shipping Diff': r.pagado != null ? (r.shipping_charged ?? 0) - r.pagado : '',
+        'Tracking': r.tracking.map(t => t.tracking).join(', '),
       }));
       const ws = XLSX.utils.json_to_sheet(datos);
       ws['!cols'] = [{ wch: 12 }, { wch: 11 }, { wch: 32 }, { wch: 20 },
@@ -145,7 +160,7 @@ export function SoHistory() {
       <div className="flex items-center gap-3 flex-wrap">
         <input
           type="search"
-          placeholder="SO #, customer or status…"
+          placeholder="SO #, customer, status or tracking…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-64"
@@ -168,14 +183,14 @@ export function SoHistory() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['SO Number', 'Date', 'Customer', 'Status', 'Amount', 'Shipping Charged', 'Shipping Paid', 'Diff'].map(h => (
+                  {['SO Number', 'Date', 'Customer', 'Status', 'Amount', 'Shipping Charged', 'Shipping Paid', 'Diff', 'Tracking'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px] whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filas.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-8 text-center text-muted font-mono">
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted font-mono">
                     No data yet — runs with the pipeline (SQL_so_history.sql + one run)
                   </td></tr>
                 ) : filas.slice(0, 500).map(r => {
@@ -199,6 +214,15 @@ export function SoHistory() {
                             {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
                           </span>
                         )}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[11px]">
+                        {r.tracking.length === 0
+                          ? <span className="text-muted">—</span>
+                          : r.tracking.map((t, i) => (
+                            <div key={i} className="whitespace-nowrap text-slate-300" title={`Despachado ${t.ship_date}`}>
+                              {t.tracking}
+                            </div>
+                          ))}
                       </td>
                     </tr>
                   );
