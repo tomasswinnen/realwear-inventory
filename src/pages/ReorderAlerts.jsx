@@ -8,15 +8,32 @@ import { TableSkeleton } from '../components/Skeleton';
 import { calcMonthsCoverage, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchReorderData() {
-  const [skusRes, snapshotRes, forecastRes] = await Promise.all([
+  const [skusRes, snapshotRes, forecastRes, tosRes, posRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('*')),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
+    // Lo que YA está en movimiento: si hay un TO en camino o una PO abierta
+    // para el SKU, el faltante puede estar resuelto sin crear nada nuevo.
+    excludeSkus(supabase.from('open_transfer_orders')
+      .select('sku, transfer_order_number, qty_open, destination_location, status')),
+    excludeSkus(supabase.from('open_pos').select('sku, po_number, qty_open, status')),
   ]);
   for (const r of [skusRes, snapshotRes, forecastRes]) {
     if (r.error) throw new Error(r.error.message);
   }
-  return { skus: skusRes.data, snapshot: snapshotRes.data, forecast: forecastRes.data };
+  return {
+    skus: skusRes.data, snapshot: snapshotRes.data, forecast: forecastRes.data,
+    openTos: tosRes.error ? [] : tosRes.data ?? [],
+    openPos: posRes.error ? [] : posRes.data ?? [],
+  };
+}
+
+function whCorto(loc) {
+  if (!loc) return '?';
+  const l = loc.toLowerCase();
+  if (l.includes('portland')) return 'PDX';
+  if (l.includes('hong kong')) return 'HK';
+  return loc.replace(/^\d+\s*-\s*/, '').trim();
 }
 
 function calcSuggestedQty(skuInfo, avg6) {
@@ -94,7 +111,14 @@ export function ReorderAlerts() {
             const from = pdxLow ? 'HK → PDX' : 'PDX → HK';
             const lowWh = pdxLow ? 'Portland' : 'Hong Kong';
             const qty = Math.ceil(avg6 * 3) - (pdxLow ? portland : hk);
-            transferRows.push({ ...sku, onHand, portland, hk, avg6, months, monthsPdx, monthsHk, from, lowWh, transferQty: Math.max(0, qty) });
+            // ¿Ya hay algo en movimiento para este SKU?
+            const tosSku = (data.openTos ?? []).filter(t => t.sku === sku.sku && (t.qty_open ?? 0) > 0);
+            const posSku = (data.openPos ?? []).filter(p => p.sku === sku.sku && (p.qty_open ?? 0) > 0);
+            transferRows.push({
+              ...sku, onHand, portland, hk, avg6, months, monthsPdx, monthsHk,
+              from, lowWh, transferQty: Math.max(0, qty),
+              enCamino: tosSku, poAbierta: posSku,
+            });
           }
         }
       });
@@ -194,7 +218,7 @@ export function ReorderAlerts() {
       <section className="space-y-2">
         <div>
           <h2 className="text-sm font-sans font-semibold text-white">Transfer Orders needed</h2>
-          <p className="text-[11px] text-muted font-mono mt-0.5">Total stock is OK but one warehouse has &lt; 2 months coverage — consider a transfer instead of a new PO</p>
+          <p className="text-[11px] text-muted font-mono mt-0.5">Total stock is OK but one warehouse has &lt; 2 months coverage — check "Already Incoming" before creating anything: a green TO means it's on its way</p>
         </div>
         {loading ? <TableSkeleton rows={4} cols={8} /> : (
           <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
@@ -202,14 +226,14 @@ export function ReorderAlerts() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'Avg/Mo', 'Total', 'Portland', 'PDX Coverage', 'Hong Kong', 'HK Coverage', 'Direction', 'Suggested Transfer'].map(h => (
+                    {['SKU', 'Description', 'Avg/Mo', 'Total', 'Portland', 'PDX Coverage', 'Hong Kong', 'HK Coverage', 'Direction', 'Suggested Transfer', 'Already Incoming'].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {transferRows.length === 0 ? (
-                    <tr><td colSpan={10} className="px-4 py-10 text-center text-muted font-mono">No warehouse imbalances detected</td></tr>
+                    <tr><td colSpan={11} className="px-4 py-10 text-center text-muted font-mono">No warehouse imbalances detected</td></tr>
                   ) : transferRows.map(row => (
                     <tr key={row.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-3 py-2.5"><Link to={`/item/${row.sku}`} className="font-mono text-accent hover:text-accent/80">{row.sku}</Link></td>
@@ -224,6 +248,28 @@ export function ReorderAlerts() {
                         <span className="font-mono text-xs px-2 py-0.5 rounded bg-warning/10 text-warning border border-warning/20">{row.from}</span>
                       </td>
                       <td className="px-3 py-2.5 font-mono text-white font-medium">{row.transferQty.toLocaleString()} units</td>
+                      <td className="px-3 py-2.5 font-mono text-[11px]">
+                        {row.enCamino.length === 0 && row.poAbierta.length === 0
+                          ? <span className="text-muted">nothing incoming</span>
+                          : (
+                            <div className="space-y-0.5">
+                              {row.enCamino.map((t, i) => {
+                                const alDestinoCorrecto = whCorto(t.destination_location) === (row.lowWh === 'Portland' ? 'PDX' : 'HK');
+                                return (
+                                  <div key={`t${i}`} className={`whitespace-nowrap ${alDestinoCorrecto ? 'text-success' : 'text-slate-300'}`}
+                                    title={alDestinoCorrecto ? 'Transfer en camino al depósito que está bajo' : 'Transfer en camino, pero a otro depósito'}>
+                                    {t.transfer_order_number} · {(t.qty_open ?? 0).toLocaleString()} u → {whCorto(t.destination_location)}
+                                  </div>
+                                );
+                              })}
+                              {row.poAbierta.map((p, i) => (
+                                <div key={`p${i}`} className="whitespace-nowrap text-slate-300" title={`PO abierta (${p.status ?? ''})`}>
+                                  {p.po_number} · {(p.qty_open ?? 0).toLocaleString()} u on order
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
