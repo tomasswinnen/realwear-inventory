@@ -71,7 +71,30 @@ async function fetchSoHistory() {
   const skusRes = await excludeSkus(supabase.from('skus').select('sku, description'));
   const descBySku = Object.fromEntries((skusRes.data ?? []).map(s => [s.sku, s.description]));
 
-  return { historia, pagadoPorSo, trackBySo, descBySku, hayCostos: costos.length > 0 };
+  // Warehouse de origen por orden: sale de las líneas (so_lines.location).
+  // Se traen solo esas dos columnas; si la tabla/columna aún no existe, la
+  // página funciona sin la columna de warehouse.
+  const whBySo = new Map();
+  try {
+    const lineas = await paginado(() =>
+      supabase.from('so_lines').select('so_number, location').order('id', { ascending: true }));
+    for (const l of lineas) {
+      if (!l.location) continue;
+      if (!whBySo.has(l.so_number)) whBySo.set(l.so_number, new Set());
+      whBySo.get(l.so_number).add(l.location);
+    }
+  } catch { /* sin location todavía */ }
+
+  return { historia, pagadoPorSo, trackBySo, descBySku, whBySo, hayCostos: costos.length > 0 };
+}
+
+// Nombres cortos de depósito para la tabla
+function warehouseCorto(loc) {
+  if (!loc) return null;
+  const l = loc.toLowerCase();
+  if (l.includes('portland')) return 'Portland';
+  if (l.includes('hong kong')) return 'Hong Kong';
+  return loc.replace(/^\d+\s*-\s*/, '').trim();
 }
 
 // Detalle de UNA orden, cargado recién al desplegarla: qué items llevaba
@@ -96,7 +119,7 @@ function FragmentoFila({ open, detalle, children }) {
       {children}
       {open && (
         <tr className="border-b border-white/[0.04] bg-white/[0.015]">
-          <td colSpan={9}>{detalle}</td>
+          <td colSpan={10}>{detalle}</td>
         </tr>
       )}
     </>
@@ -128,7 +151,7 @@ function DetalleSo({ so, descBySku }) {
         <table className="w-full text-xs">
           <thead>
             <tr>
-              {['Item', 'Qty', 'Amount'].map(h => (
+              {['Item', 'Warehouse', 'Qty', 'Amount'].map(h => (
                 <th key={h} className="px-3 py-1.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[9px]">{h}</th>
               ))}
             </tr>
@@ -140,6 +163,9 @@ function DetalleSo({ so, descBySku }) {
                   {isValidSku(l.sku)
                     ? <Link to={`/item/${l.sku}`} onClick={e => e.stopPropagation()} className="font-mono text-accent hover:text-accent/80">{nombre(l.sku)}</Link>
                     : <span className="font-mono text-muted">{nombre(l.sku)}</span>}
+                </td>
+                <td className="px-3 py-1.5 font-mono text-slate-300 whitespace-nowrap">
+                  {l.location ? warehouseCorto(l.location) : <span className="text-muted">—</span>}
                 </td>
                 <td className="px-3 py-1.5 font-mono text-white">{l.qty?.toLocaleString()}</td>
                 <td className="px-3 py-1.5 font-mono text-slate-300">{formatCurrency(l.amount)}</td>
@@ -191,6 +217,7 @@ export function SoHistory() {
         ...r,
         pagado: data.pagadoPorSo.get(r.so_number) ?? null,
         tracking: data.trackBySo.get(r.so_number) ?? [],
+        warehouses: [...(data.whBySo.get(r.so_number) ?? [])].map(warehouseCorto),
       }))
       .filter(r => {
         if (soloConEnvio && !(r.shipping_charged > 0) && r.pagado == null) return false;
@@ -198,6 +225,7 @@ export function SoHistory() {
           || r.so_number?.toLowerCase().includes(q)
           || r.customer?.toLowerCase().includes(q)
           || r.status?.toLowerCase().includes(q)
+          || r.warehouses.some(w => w?.toLowerCase().includes(q))
           || r.tracking.some(t => t.tracking?.toLowerCase().includes(q));
       });
 
@@ -224,6 +252,7 @@ export function SoHistory() {
         'Shipping Charged': r.shipping_charged,
         'Shipping Paid': r.pagado ?? '',
         'Shipping Diff': r.pagado != null ? (r.shipping_charged ?? 0) - r.pagado : '',
+        'Warehouse': r.warehouses.join(' + '),
         'Tracking': r.tracking.map(t => t.tracking).join(', '),
       }));
       const ws = XLSX.utils.json_to_sheet(datos);
@@ -290,14 +319,14 @@ export function SoHistory() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['SO Number', 'Date', 'Customer', 'Status', 'Amount', 'Shipping Charged', 'Shipping Paid', 'Diff', 'Tracking'].map(h => (
+                  {['SO Number', 'Date', 'Customer', 'Warehouse', 'Status', 'Amount', 'Shipping Charged', 'Shipping Paid', 'Diff', 'Tracking'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px] whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filas.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted font-mono">
+                  <tr><td colSpan={10} className="px-4 py-8 text-center text-muted font-mono">
                     No data yet — runs with the pipeline (SQL_so_history.sql + one run)
                   </td></tr>
                 ) : filas.slice(0, 500).map(r => {
@@ -314,6 +343,9 @@ export function SoHistory() {
                       </td>
                       <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{r.so_date}</td>
                       <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[260px] truncate" title={r.customer}>{r.customer}</td>
+                      <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
+                        {r.warehouses.length ? r.warehouses.join(' + ') : <span className="text-muted">—</span>}
+                      </td>
                       <td className="px-4 py-2.5"><StatusBadge status={r.status} /></td>
                       <td className="px-4 py-2.5 font-mono text-slate-300">{formatCurrency(r.amount)}</td>
                       <td className="px-4 py-2.5 font-mono text-white">
