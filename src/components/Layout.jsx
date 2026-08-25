@@ -25,6 +25,7 @@ const NAV_SECTIONS = [
   ]},
   { section: 'Sales', items: [
     { to: '/backlog',     label: 'Open Sales Orders', icon: '🧾' },
+    { to: '/so-history',  label: 'SO History',      icon: '🗂️' },
     { to: '/sales-pipeline', label: 'Sales Pipeline', icon: '💰' },
     { to: '/margins',     label: 'Margins',         icon: '💹' },
     { to: '/distributor-stock', label: 'Distributor Stock', icon: '🏬' },
