@@ -36,7 +36,23 @@ async function fetchOnOrderData() {
   for (const r of [skusRes, snapshotRes, poRes, openPosRes]) {
     if (r.error) throw new Error(r.error.message);
   }
-  return { skus: skusRes.data, snapshot: snapshotRes.data, pos: poRes.data, openPos: openPosRes.data };
+
+  // Tracking de las recepciones de estas POs (so_tracking guarda SO/TO/PO por
+  // igual). Solo hay datos si alguien cargó el tracking al recibir en
+  // NetSuite; si la tabla aún no tiene nada de POs, la página funciona igual.
+  const poNumbers = [...new Set([
+    ...(poRes.data ?? []).map(p => p.po_number),
+    ...(openPosRes.data ?? []).map(p => p.po_number),
+  ].filter(Boolean))];
+  const tracking = [];
+  for (let i = 0; i < poNumbers.length && i < 600; i += 100) {
+    const res = await supabase.from('so_tracking').select('*')
+      .in('so_number', poNumbers.slice(i, i + 100));
+    if (res.error) break;
+    tracking.push(...(res.data ?? []));
+  }
+
+  return { skus: skusRes.data, snapshot: snapshotRes.data, pos: poRes.data, openPos: openPosRes.data, tracking };
 }
 
 export function OnOrder() {
@@ -106,7 +122,9 @@ export function OnOrder() {
         const snap = latestSnap[po.sku] ?? {};
         const unitCost = po.unit_cost ?? info.unit_cost ?? 0;
         const totalValue = (po.qty_ordered ?? 0) * unitCost;
+        const tracking = (data.tracking ?? []).filter(t => t.so_number === po.po_number);
         return {
+          tracking,
           ...po,
           description: info.description,
           supplier: po.vendor ?? info.supplier,
@@ -260,7 +278,18 @@ export function OnOrder() {
                     <td className="px-4 py-2.5 text-slate-300 font-sans max-w-[160px] truncate" title={row.description}>
                       {row.description}
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-slate-300">{row.po_number}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
+                      {row.po_number}
+                      {row.tracking?.length > 0 && (
+                        <div className="mt-0.5 space-y-0.5">
+                          {row.tracking.map((t, i) => (
+                            <p key={i} className="text-[10px] text-success font-mono" title={`Recibido ${t.ship_date}`}>
+                              {t.tracking}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-muted font-sans max-w-[140px] truncate" title={row.supplier}>
                       {row.supplier}
                     </td>

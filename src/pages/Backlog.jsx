@@ -36,6 +36,24 @@ async function fetchBacklog() {
   return { rows, skus: skusRes.data ?? [], tracking };
 }
 
+// Lookup universal de tracking: so_tracking guarda ventas (SO), transfers
+// (TO) y compras (PO) juntas — pegás un tracking number de una factura del
+// carrier y te dice de qué orden es, aunque esté cerrada hace meses.
+// Se consulta recién con 4+ caracteres para no disparar en cada tecla.
+async function buscarTracking(q) {
+  const s = q.trim();
+  if (s.length < 4) return [];
+  const like = `%${s}%`;
+  const res = await supabase.from('so_tracking')
+    .select('*')
+    .or(`so_number.ilike.${like},tracking.ilike.${like}`)
+    .order('ship_date', { ascending: false })
+    .limit(20);
+  return res.error ? [] : res.data ?? [];
+}
+
+const TIPO_ORDEN = { SalesOrd: 'SO', TrnfrOrd: 'TO', PurchOrd: 'PO' };
+
 function Chevron({ open }) {
   return (
     <svg className={`w-3.5 h-3.5 inline-block transition-transform ${open ? 'rotate-90' : ''}`}
@@ -50,6 +68,7 @@ export function Backlog() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [abiertos, setAbiertos] = useState(() => new Set());
+  const { data: trackMatches } = useQuery(() => buscarTracking(search), [search]);
 
   const toggle = so => setAbiertos(prev => {
     const next = new Set(prev);
@@ -177,6 +196,33 @@ export function Backlog() {
             Tracking numbers appear once NetSuite has a shipped fulfillment for the order.
             Search also matches tracking numbers.
           </p>
+        </div>
+      )}
+
+      {/* Resultados del lookup universal: órdenes YA despachadas/cerradas
+          (ventas, transfers y compras) que matchean lo buscado */}
+      {search.trim().length >= 4 && (trackMatches ?? []).filter(t => !ordenes.some(g => g.so === t.so_number)).length > 0 && (
+        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+          <p className="px-4 pt-3 pb-1 text-[10px] text-muted font-sans font-medium uppercase tracking-wider">
+            Shipped / closed orders matching "{search.trim()}" — sales, transfers and purchases
+          </p>
+          <table className="w-full text-xs">
+            <tbody>
+              {(trackMatches ?? []).filter(t => !ordenes.some(g => g.so === t.so_number)).map((t, i) => (
+                <tr key={i} className="border-t border-white/[0.04]">
+                  <td className="px-4 py-2 font-mono text-white whitespace-nowrap">
+                    {t.so_number}
+                    {t.order_type && TIPO_ORDEN[t.order_type] && (
+                      <span className="ml-1.5 text-[9px] text-muted uppercase">{TIPO_ORDEN[t.order_type]}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-muted">{t.fulfillment}</td>
+                  <td className="px-4 py-2 font-mono text-muted whitespace-nowrap">{t.ship_date}</td>
+                  <td className="px-4 py-2 font-mono text-slate-300">{t.tracking}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

@@ -25,7 +25,24 @@ async function fetchOpenTransferOrders() {
   ]);
   if (ordersRes.error) throw new Error(ordersRes.error.message);
   const descBySku = Object.fromEntries((skusRes.data ?? []).map(s => [s.sku, s.description]));
-  return { orders: (ordersRes.data ?? []).map(o => ({ ...o, description: descBySku[o.sku] ?? '' })) };
+
+  // Tracking de los despachos de estos TOs (mismo lugar que el de las SO)
+  const toNumbers = [...new Set((ordersRes.data ?? []).map(o => o.transfer_order_number).filter(Boolean))];
+  const tracking = [];
+  for (let i = 0; i < toNumbers.length; i += 100) {
+    const res = await supabase.from('so_tracking').select('*')
+      .in('so_number', toNumbers.slice(i, i + 100));
+    if (res.error) break; // tabla/datos ausentes: la página funciona igual
+    tracking.push(...(res.data ?? []));
+  }
+
+  return {
+    orders: (ordersRes.data ?? []).map(o => ({
+      ...o,
+      description: descBySku[o.sku] ?? '',
+      tracking: tracking.filter(t => t.so_number === o.transfer_order_number),
+    })),
+  };
 }
 
 export function TransferOrders() {
@@ -92,7 +109,18 @@ export function TransferOrders() {
                     <tr><td colSpan={9} className="px-4 py-10 text-center text-muted font-mono">No open transfer orders found</td></tr>
                   ) : rows.map(order => (
                     <tr key={order.transfer_order_number} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                      <td className="px-3 py-2.5 font-mono text-accent">{order.transfer_order_number}</td>
+                      <td className="px-3 py-2.5 font-mono text-accent whitespace-nowrap align-top">
+                        {order.transfer_order_number}
+                        {order.tracking?.length > 0 && (
+                          <div className="mt-0.5 space-y-0.5">
+                            {order.tracking.map((t, i) => (
+                              <p key={i} className="text-[10px] text-success font-mono" title={`Despachado ${t.ship_date}`}>
+                                {t.tracking}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 font-mono text-muted">{order.transfer_date ?? '—'}</td>
                       <td className="px-3 py-2.5 align-top max-w-[260px]">
                         <Link to={`/item/${order.sku}`} className="font-mono text-accent hover:text-accent/80">{order.sku}</Link>
