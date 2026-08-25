@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { Link } from 'react-router-dom';
+import { supabase, excludeSkus } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
-import { formatCurrency } from '../utils/coverage';
+import { formatCurrency, isValidSku } from '../utils/coverage';
 
 // Historial de sales orders (18 meses, cerradas incluidas) enfocado en el
 // COSTO DE ENVÍO: qué se le cobró de envío al cliente en cada orden
@@ -67,7 +68,106 @@ async function fetchSoHistory() {
     }
   }
 
-  return { historia, pagadoPorSo, trackBySo, hayCostos: costos.length > 0 };
+  const skusRes = await excludeSkus(supabase.from('skus').select('sku, description'));
+  const descBySku = Object.fromEntries((skusRes.data ?? []).map(s => [s.sku, s.description]));
+
+  return { historia, pagadoPorSo, trackBySo, descBySku, hayCostos: costos.length > 0 };
+}
+
+// Detalle de UNA orden, cargado recién al desplegarla: qué items llevaba
+// (so_lines) y qué seriales salieron (serial_shipments).
+async function fetchDetalleSo(so) {
+  const [linesRes, serRes] = await Promise.all([
+    supabase.from('so_lines').select('*').eq('so_number', so),
+    supabase.from('serial_shipments').select('serial, sku, doc_type, fecha')
+      .eq('so_number', so).limit(1000),
+  ]);
+  return {
+    lines: linesRes.error ? null : linesRes.data ?? [], // null = tabla ausente
+    serials: serRes.error ? [] : (serRes.data ?? []).filter(s => s.doc_type === 'ItemShip'),
+  };
+}
+
+// Fila + su detalle desplegado (el detalle solo se monta al abrir, así la
+// consulta por orden se hace recién ahí)
+function FragmentoFila({ open, detalle, children }) {
+  return (
+    <>
+      {children}
+      {open && (
+        <tr className="border-b border-white/[0.04] bg-white/[0.015]">
+          <td colSpan={9}>{detalle}</td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function Chevron({ open }) {
+  return (
+    <svg className={`w-3.5 h-3.5 inline-block transition-transform ${open ? 'rotate-90' : ''}`}
+      fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function DetalleSo({ so, descBySku }) {
+  const { data, loading } = useQuery(() => fetchDetalleSo(so), [so]);
+  if (loading) return <p className="px-6 py-3 text-xs font-mono text-muted">Loading order detail…</p>;
+  const nombre = sku => (descBySku[sku] ? `${sku} — ${descBySku[sku]}` : sku);
+  return (
+    <div className="px-6 py-3 space-y-3">
+      {data?.lines === null ? (
+        <p className="text-xs font-mono text-muted">
+          Line detail not loaded yet — run SQL_so_lines.sql in Supabase plus one pipeline run.
+        </p>
+      ) : (data?.lines ?? []).length === 0 ? (
+        <p className="text-xs font-mono text-muted">No line detail for this order.</p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr>
+              {['Item', 'Qty', 'Amount'].map(h => (
+                <th key={h} className="px-3 py-1.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[9px]">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.lines.map((l, i) => (
+              <tr key={i} className="border-t border-white/[0.04]">
+                <td className="px-3 py-1.5 max-w-[380px] truncate" title={nombre(l.sku)}>
+                  {isValidSku(l.sku)
+                    ? <Link to={`/item/${l.sku}`} onClick={e => e.stopPropagation()} className="font-mono text-accent hover:text-accent/80">{nombre(l.sku)}</Link>
+                    : <span className="font-mono text-muted">{nombre(l.sku)}</span>}
+                </td>
+                <td className="px-3 py-1.5 font-mono text-white">{l.qty?.toLocaleString()}</td>
+                <td className="px-3 py-1.5 font-mono text-slate-300">{formatCurrency(l.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {(data?.serials ?? []).length > 0 && (
+        <div className="pt-2 border-t border-white/[0.06]">
+          <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider mb-1">
+            Serials shipped ({data.serials.length})
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {data.serials.slice(0, 120).map((s, i) => (
+              <span key={i} className="font-mono text-[10px] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5"
+                title={`${s.sku} · ${s.fecha}`}>
+                {s.serial}
+              </span>
+            ))}
+            {data.serials.length > 120 && (
+              <span className="text-[10px] font-mono text-muted">+{data.serials.length - 120} more (see Serial Numbers)</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function SoHistory() {
@@ -75,6 +175,13 @@ export function SoHistory() {
   const [search, setSearch] = useState('');
   const [soloConEnvio, setSoloConEnvio] = useState(false);
   const [exportando, setExportando] = useState(false);
+  const [abiertas, setAbiertas] = useState(() => new Set());
+
+  const toggle = so => setAbiertas(prev => {
+    const next = new Set(prev);
+    if (next.has(so)) next.delete(so); else next.add(so);
+    return next;
+  });
 
   const { filas, kpis } = useMemo(() => {
     if (!data) return { filas: [], kpis: null };
@@ -195,9 +302,16 @@ export function SoHistory() {
                   </td></tr>
                 ) : filas.slice(0, 500).map(r => {
                   const diff = r.pagado != null ? (r.shipping_charged ?? 0) - r.pagado : null;
+                  const open = abiertas.has(r.so_number);
                   return (
-                    <tr key={r.so_number} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                      <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">{r.so_number}</td>
+                    <FragmentoFila key={r.so_number} open={open}
+                      detalle={<DetalleSo so={r.so_number} descBySku={data.descBySku} />}>
+                    <tr onClick={() => toggle(r.so_number)}
+                      className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors cursor-pointer select-none">
+                      <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">
+                        <span className="text-muted mr-1.5"><Chevron open={open} /></span>
+                        {r.so_number}
+                      </td>
                       <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{r.so_date}</td>
                       <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[260px] truncate" title={r.customer}>{r.customer}</td>
                       <td className="px-4 py-2.5"><StatusBadge status={r.status} /></td>
@@ -225,12 +339,14 @@ export function SoHistory() {
                           ))}
                       </td>
                     </tr>
+                    </FragmentoFila>
                   );
                 })}
               </tbody>
             </table>
           </div>
           <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
+            Click an order to see what shipped in it (items and serials).
             Showing up to 500 rows — search to narrow, or Export Excel for everything.
             "Shipping paid" fills in as carrier invoices are loaded; the link between an invoice
             and an order is the tracking number.
