@@ -173,7 +173,23 @@ export function Backlog() {
       </div>
 
       {loading ? <TableSkeleton rows={10} cols={7} /> : (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+        <>
+        {/* Mobile: tarjetas por orden */}
+        <div className="sm:hidden space-y-2.5">
+          {ordenes.length === 0 ? (
+            <p className="py-8 text-center text-muted font-mono text-xs">No open backlog</p>
+          ) : ordenes.map(g => (
+            <SoCard key={g.so} g={g} open={abiertos.has(g.so)} onToggle={() => toggle(g.so)} />
+          ))}
+          {ordenes.length > 0 && (
+            <p className="px-1 pt-1 text-[10px] text-muted font-mono">
+              Tap an order to see its lines and tracking. Tracking appears once NetSuite has a shipped fulfillment.
+            </p>
+          )}
+        </div>
+
+        {/* Desktop: tabla completa */}
+        <div className="hidden sm:block bg-card rounded-lg border border-white/[0.08] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -197,6 +213,7 @@ export function Backlog() {
             Search also matches tracking numbers.
           </p>
         </div>
+        </>
       )}
 
       {/* Resultados del lookup universal: órdenes YA despachadas/cerradas
@@ -206,6 +223,7 @@ export function Backlog() {
           <p className="px-4 pt-3 pb-1 text-[10px] text-muted font-sans font-medium uppercase tracking-wider">
             Shipped / closed orders matching "{search.trim()}" — sales, transfers and purchases
           </p>
+          <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <tbody>
               {(trackMatches ?? []).filter(t => !ordenes.some(g => g.so === t.so_number)).map((t, i) => (
@@ -223,6 +241,7 @@ export function Backlog() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
@@ -297,5 +316,70 @@ function SoRow({ g, open, onToggle }) {
         </tr>
       )}
     </>
+  );
+}
+
+// Tarjeta por orden para mobile: resumen tocable + detalle desplegable.
+function SoCard({ g, open, onToggle }) {
+  return (
+    <div className="bg-card rounded-xl border border-white/[0.08] overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-4 pt-3 pb-2.5 active:bg-white/[0.04] transition-colors select-none"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-white text-[13px] font-medium">{g.so}</span>
+          <StatusBadge status={g.status} />
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <span className="font-sans text-slate-300 text-xs truncate">{g.customer}</span>
+          <span className="font-mono text-muted text-[11px] whitespace-nowrap shrink-0">{g.so_date}</span>
+        </div>
+        <div className="mt-2.5 grid grid-cols-3 gap-1.5">
+          {[
+            ['Qty Open', g.qtyOpen.toLocaleString(), 'text-white'],
+            ['Value Open', formatCurrency(g.valueOpen), 'text-white'],
+            ['Tracking', g.tracking.length > 0 ? `${g.tracking.length} pkg${g.tracking.length > 1 ? 's' : ''}` : '—',
+              g.tracking.length > 0 ? 'text-success' : 'text-muted'],
+          ].map(([lbl, val, cls]) => (
+            <div key={lbl} className="rounded-lg bg-white/[0.03] px-1.5 py-1.5 text-center">
+              <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider">{lbl}</p>
+              <p className={`text-[11px] font-mono mt-0.5 ${cls}`}>{val}</p>
+            </div>
+          ))}
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-white/[0.06] bg-white/[0.015] px-4 py-3 space-y-2.5">
+          {g.lineas.map(l => (
+            <div key={l.id} className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                {isValidSku(l.sku)
+                  ? <Link to={`/item/${l.sku}`} onClick={e => e.stopPropagation()} className="font-mono text-accent text-xs">{l.sku}</Link>
+                  : <span className="font-mono text-muted text-xs">{l.sku}</span>}
+                <p className="font-sans text-muted text-[11px] truncate">{l.description}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="font-mono text-white text-xs">{l.qty_open?.toLocaleString()} open</p>
+                <p className="font-mono text-muted text-[11px]">{formatCurrency(l.amount_open)}</p>
+              </div>
+            </div>
+          ))}
+          {g.tracking.length > 0 && (
+            <div className="pt-2 border-t border-white/[0.06]">
+              <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider mb-1">Tracking</p>
+              <div className="flex flex-wrap gap-1.5">
+                {g.tracking.map((t, i) => (
+                  <span key={i} className="font-mono text-[10px] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+                    <span className="text-white">{t.tracking}</span>
+                    <span className="text-muted"> · {t.ship_date}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

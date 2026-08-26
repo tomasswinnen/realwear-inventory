@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
+import { LogoMark } from '../components/Logo';
 
 // Página a la que llega el link de "reset password" del correo. El link de
 // Supabase trae un token que el cliente convierte en sesión automáticamente
@@ -36,9 +37,7 @@ export function UpdatePassword() {
     <div className="min-h-screen bg-[#0f1923] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 mb-8 justify-center">
-          <div className="w-7 h-7 bg-accent rounded flex items-center justify-center">
-            <span className="text-white font-bold text-xs font-mono">RW</span>
-          </div>
+          <LogoMark className="w-8 h-8 text-white" />
           <span className="font-sans font-semibold text-white text-base tracking-wide">
             Inventory
           </span>

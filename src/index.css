@@ -24,6 +24,14 @@
     color: #e2e8f0;
     font-family: 'DM Sans', sans-serif;
     -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent; /* sin flash azul de iOS al tocar */
+    -webkit-text-size-adjust: 100%;
+  }
+  /* feedback tactil: filas clickeables se marcan al tocarlas (solo touch) */
+  @media (hover: none) {
+    tr.cursor-pointer:active {
+      background-color: rgba(255, 255, 255, 0.06);
+    }
   }
   /* scrollbar */
   ::-webkit-scrollbar { width: 6px; height: 6px; }

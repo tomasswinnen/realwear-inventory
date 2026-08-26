@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
+import { LogoMark } from '../components/Logo';
 
 // Autorregistro abierto SOLO para correos de la empresa. La validación de acá
 // es UX; la de verdad es un trigger en Postgres sobre auth.users
@@ -82,9 +83,7 @@ export function Login() {
     <div className="min-h-screen bg-[#0f1923] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 mb-8 justify-center">
-          <div className="w-7 h-7 bg-accent rounded flex items-center justify-center">
-            <span className="text-white font-bold text-xs font-mono">RW</span>
-          </div>
+          <LogoMark className="w-8 h-8 text-white" />
           <span className="font-sans font-semibold text-white text-base tracking-wide">
             Inventory
           </span>

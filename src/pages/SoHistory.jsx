@@ -316,7 +316,77 @@ export function SoHistory() {
       </div>
 
       {loading ? <TableSkeleton rows={12} cols={7} /> : (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+        <>
+        {/* Mobile: tarjetas por orden (la tabla completa queda para pantallas grandes) */}
+        <div className="sm:hidden space-y-2.5">
+          {filas.length === 0 ? (
+            <p className="py-8 text-center text-muted font-mono text-xs">
+              No data yet — runs with the pipeline (SQL_so_history.sql + one run)
+            </p>
+          ) : filas.slice(0, 200).map(r => {
+            const diff = r.pagado != null ? (r.shipping_charged ?? 0) - r.pagado : null;
+            const open = abiertas.has(r.so_number);
+            return (
+              <div key={r.so_number} className="bg-card rounded-xl border border-white/[0.08] overflow-hidden">
+                <button
+                  onClick={() => toggle(r.so_number)}
+                  className="w-full text-left px-4 pt-3 pb-2.5 active:bg-white/[0.04] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-white text-[13px] font-medium">{r.so_number}</span>
+                    <StatusBadge status={r.status} />
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <span className="font-sans text-slate-300 text-xs truncate">{r.customer}</span>
+                    <span className="font-mono text-muted text-[11px] whitespace-nowrap shrink-0">
+                      {r.warehouses.length ? `${r.warehouses.join('+')} · ` : ''}{r.so_date}
+                    </span>
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-4 gap-1.5">
+                    {[
+                      ['Amount', formatCurrency(r.amount), 'text-slate-300'],
+                      ['Charged', (r.shipping_charged ?? 0) > 0 ? formatCurrency(r.shipping_charged) : '—', 'text-white'],
+                      ['Paid', r.pagado != null ? formatCurrency(r.pagado) : '—', 'text-slate-300'],
+                      ['Diff', diff == null ? '—' : `${diff >= 0 ? '+' : ''}${formatCurrency(diff)}`,
+                        diff == null ? 'text-muted' : diff < 0 ? 'text-danger' : 'text-success'],
+                    ].map(([lbl, val, cls]) => (
+                      <div key={lbl} className="rounded-lg bg-white/[0.03] px-1.5 py-1.5 text-center">
+                        <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider">{lbl}</p>
+                        <p className={`text-[11px] font-mono mt-0.5 ${cls}`}>{val}</p>
+                      </div>
+                    ))}
+                  </div>
+                </button>
+                {open && (
+                  <div className="border-t border-white/[0.06] bg-white/[0.015]">
+                    {r.tracking.length > 0 && (
+                      <div className="px-4 pt-2.5">
+                        <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider mb-1">Tracking</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {r.tracking.map((t, i) => (
+                            <span key={i} className="font-mono text-[10px] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+                              {t.tracking}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <DetalleSo so={r.so_number} descBySku={data.descBySku} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {filas.length > 0 && (
+            <p className="px-1 pt-1 text-[10px] text-muted font-mono">
+              Tap an order to see items, serials and tracking.
+              Showing up to 200 orders — search to narrow, or Export Excel for everything.
+            </p>
+          )}
+        </div>
+
+        {/* Desktop: tabla completa */}
+        <div className="hidden sm:block bg-card rounded-lg border border-white/[0.08] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -386,6 +456,7 @@ export function SoHistory() {
             order by tracking number, or directly when the invoice itemizes the order (Javelin).
           </p>
         </div>
+        </>
       )}
     </div>
   );
