@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { FitText } from '../components/FitText';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
@@ -65,7 +66,7 @@ function MetricCard({ label, value, valueClass = 'text-white', sub, loading }) {
       </p>
       {loading
         ? <Skeleton className="h-7 w-24 rounded" />
-        : <p className={`text-[1.625rem] font-num leading-none ${valueClass}`}>{value ?? '—'}</p>
+        : <p className={`text-[1.35rem] sm:text-[1.625rem] font-num leading-none ${valueClass}`}><FitText>{value ?? '—'}</FitText></p>
       }
       {sub && !loading && (
         <p className="text-[10px] font-mono text-slate-600">{sub}</p>

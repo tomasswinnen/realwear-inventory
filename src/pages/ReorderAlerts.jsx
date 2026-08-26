@@ -156,7 +156,7 @@ export function ReorderAlerts() {
       </div>
 
       {!loading && (
-        <div className="flex items-center gap-4 text-xs font-mono">
+        <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-xs font-mono">
           <span className="text-danger">{reorderRows.filter(r => r.months < 1).length} urgent (&lt;1mo)</span>
           <span className="text-warning">{reorderRows.filter(r => r.months >= 1 && r.months < 3).length} watch (1–3mo)</span>
           <span className="text-muted">{reorderRows.length} reorders · {transferRows.length} transfers</span>

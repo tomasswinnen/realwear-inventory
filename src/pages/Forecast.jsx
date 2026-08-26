@@ -109,7 +109,48 @@ export function Forecast() {
       </div>
 
       {loading ? <TableSkeleton rows={10} cols={7} /> : (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+        <>
+        {/* Mobile: tarjetas por SKU */}
+        <div className="sm:hidden space-y-2.5">
+          {rows.length === 0 ? (
+            <p className="py-8 text-center text-muted font-mono text-xs">No data</p>
+          ) : rows.slice(0, 120).map(row => (
+            <Link
+              key={row.sku}
+              to={`/item/${row.sku}`}
+              className="block bg-card rounded-xl border border-white/[0.08] px-4 pt-3 pb-2.5 active:bg-white/[0.04] transition-colors select-none"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-accent text-[13px]">{row.sku}</span>
+                <CoverageCell months={row.months} />
+              </div>
+              <p className="font-sans text-slate-300 text-xs truncate mt-0.5">{row.description}</p>
+              {notesBySku?.[row.sku] && (
+                <div className="mt-1"><SkuNoteBadge noteData={notesBySku[row.sku]} /></div>
+              )}
+              <div className="mt-2.5 grid grid-cols-3 gap-1.5">
+                {[
+                  ['On Hand', row.onHand.toLocaleString(), 'text-white'],
+                  ['On Order', row.onOrder ? row.onOrder.toLocaleString() : '—', row.onOrder ? 'text-success' : 'text-muted'],
+                  ['Avg / Mo', row.avg6.toFixed(0), 'text-slate-300'],
+                ].map(([lbl, val, cls]) => (
+                  <div key={lbl} className="rounded-lg bg-white/[0.03] px-1.5 py-1.5 text-center">
+                    <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider">{lbl}</p>
+                    <p className={`text-[11px] font-mono mt-0.5 ${cls}`}>{val}</p>
+                  </div>
+                ))}
+              </div>
+            </Link>
+          ))}
+          {rows.length > 0 && (
+            <p className="px-1 pt-1 text-[10px] text-muted font-mono">
+              Sorted by coverage — the SKUs that run out first are on top. Tap one for its full forecast.
+            </p>
+          )}
+        </div>
+
+        {/* Desktop: tabla completa */}
+        <div className="hidden sm:block bg-card rounded-lg border border-white/[0.08] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -169,6 +210,7 @@ export function Forecast() {
             <p className="text-[10px] text-muted font-mono">{rows.length} SKUs shown</p>
           </div>
         </div>
+        </>
       )}
     </div>
   );

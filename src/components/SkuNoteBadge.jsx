@@ -7,7 +7,10 @@ export function SkuNoteBadge({ noteData }) {
   const label = prefix && statusLabel ? `${prefix} · ${statusLabel}` : statusLabel || prefix;
   if (!label) return null;
   return (
-    <span className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 leading-none whitespace-nowrap">
+    <span
+      title={noteData.note ?? label}
+      className="inline-block max-w-[170px] truncate align-middle text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 whitespace-nowrap"
+    >
       {label}
     </span>
   );

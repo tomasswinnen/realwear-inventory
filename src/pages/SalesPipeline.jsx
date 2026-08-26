@@ -332,10 +332,10 @@ export function SalesPipeline() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <h2 className="text-sm font-sans font-semibold text-white">All Deals by Distributor</h2>
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex border border-white/[0.12] rounded overflow-hidden text-xs font-mono">
+            <div className="flex max-w-full overflow-x-auto border border-white/[0.12] rounded text-xs font-mono">
               <button
                 onClick={() => setStageFilter('all')}
-                className={`px-3 py-2 transition-colors ${stageFilter === 'all' ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
+                className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${stageFilter === 'all' ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
               >
                 All
               </button>
@@ -343,7 +343,7 @@ export function SalesPipeline() {
                 <button
                   key={s}
                   onClick={() => setStageFilter(s)}
-                  className={`px-3 py-2 transition-colors whitespace-nowrap ${stageFilter === s ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
+                  className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${stageFilter === s ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
                 >
                   {s}
                 </button>

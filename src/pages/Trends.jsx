@@ -116,7 +116,11 @@ export function Trends() {
           <ResponsiveContainer width="100%" height={340}>
             <LineChart data={serie} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.08)" />
-              <XAxis dataKey="fecha" tick={{ fontSize: 10, fontFamily: 'DM Mono, monospace', fill: '#64748b' }} />
+              <XAxis
+                dataKey="fecha"
+                tickFormatter={v => String(v).slice(5)}
+                tick={{ fontSize: 10, fontFamily: 'DM Mono, monospace', fill: '#64748b' }}
+              />
               <YAxis
                 tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
                 tick={{ fontSize: 10, fontFamily: 'DM Mono, monospace', fill: '#64748b' }}

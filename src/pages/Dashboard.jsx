@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { Link } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -138,6 +139,7 @@ function ProjectedCoverageCell({ months, monthsWithOrder, onOrder }) {
 
 export function Dashboard() {
   const { data, loading, error, refetch } = useQuery(fetchDashboardData, []);
+  const esMobile = useIsMobile();
 
   const { kpis, urgentItems, chartData, totalValue, openPOValue, notesBySku, openPOs, dormantItems } = useMemo(() => {
     if (!data) return {};
@@ -436,16 +438,16 @@ export function Dashboard() {
         <ChartSkeleton height={220} />
       ) : (
         <div className="bg-card rounded-lg border border-white/[0.08] p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             <h2 className="text-sm font-sans font-semibold text-white">Stock Coverage by SKU</h2>
-            <div className="flex items-center gap-4 text-[10px] font-mono">
+            <div className="flex items-center gap-3 flex-wrap text-[10px] font-mono">
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-danger inline-block" /> &lt; 1 mo</span>
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-warning inline-block" /> 1–3 mo</span>
               <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-success inline-block" /> 3+ mo</span>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            <BarChart data={esMobile ? chartData.slice(0, 12) : chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
               <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.06)" />
               <XAxis
                 dataKey="sku"
@@ -465,7 +467,7 @@ export function Dashboard() {
               />
               <Tooltip content={<CoverageTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
               <Bar dataKey="months" radius={[2, 2, 0, 0]} maxBarSize={32}>
-                {chartData?.map((entry, i) => (
+                {(esMobile ? chartData.slice(0, 12) : chartData)?.map((entry, i) => (
                   <Cell key={i} fill={coverageColor(entry.months)} />
                 ))}
               </Bar>

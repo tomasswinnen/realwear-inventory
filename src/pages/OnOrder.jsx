@@ -217,12 +217,12 @@ export function OnOrder() {
           className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-64"
         />
 
-        <div className="flex border border-white/[0.12] rounded overflow-hidden text-xs font-mono">
+        <div className="flex max-w-full overflow-x-auto border border-white/[0.12] rounded text-xs font-mono">
           {[['active', 'Active'], ['all', 'All']].map(([val, label]) => (
             <button
               key={val}
               onClick={() => setStatusFilter(val)}
-              className={`px-3 py-2 transition-colors ${statusFilter === val ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
+              className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${statusFilter === val ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
             >
               {label}
             </button>
@@ -231,7 +231,7 @@ export function OnOrder() {
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`px-3 py-2 transition-colors whitespace-nowrap ${statusFilter === s ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
+              className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${statusFilter === s ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
             >
               {s}
             </button>

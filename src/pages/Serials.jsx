@@ -194,7 +194,7 @@ export function Serials() {
         <p className="text-xs text-muted font-mono mt-0.5">Grouped by order — click one to see which serials shipped in it</p>
       </div>
 
-      <form onSubmit={buscar} className="flex items-center gap-2">
+      <form onSubmit={buscar} className="flex items-center gap-2 flex-wrap">
         <input
           type="search"
           placeholder="Serial, SO #, customer, document # or SKU…"
@@ -229,7 +229,26 @@ export function Serials() {
       {errorExport && <p className="text-xs font-mono text-danger">{errorExport}</p>}
 
       {loading ? <TableSkeleton rows={10} cols={5} /> : (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+        <>
+        {/* Mobile: tarjetas por orden */}
+        <div className="sm:hidden space-y-2.5">
+          {ordenes.length === 0 ? (
+            <p className="py-8 text-center text-muted font-mono text-xs">
+              {q ? `Nothing matches "${q}"` : 'No serial data yet — runs with the pipeline'}
+            </p>
+          ) : ordenes.map(g => (
+            <OrdenCard key={g.clave} g={g} descBySku={descBySku}
+              open={abiertas.has(g.clave)} onToggle={() => toggle(g.clave)} />
+          ))}
+          {ordenes.length > 0 && (
+            <p className="px-1 pt-1 text-[10px] text-muted font-mono">
+              Tap an order to see each serial with its fulfillment and invoice.
+            </p>
+          )}
+        </div>
+
+        {/* Desktop: tabla completa */}
+        <div className="hidden sm:block bg-card rounded-lg border border-white/[0.08] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -255,6 +274,58 @@ export function Serials() {
             Each serial inside an order shows both documents: the fulfillment (physical shipment) and the invoice.
             Search hits serial, sales order, customer, document number and SKU.
           </p>
+        </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Tarjeta por orden para mobile, con el detalle de seriales desplegable.
+function OrdenCard({ g, descBySku, open, onToggle }) {
+  return (
+    <div className="bg-card rounded-xl border border-white/[0.08] overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-4 pt-3 pb-2.5 active:bg-white/[0.04] transition-colors select-none"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-white text-[13px] font-medium">
+            {g.orden}
+            {!g.esSo && <span className="ml-1.5 text-[9px] text-muted uppercase">doc</span>}
+          </span>
+          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent whitespace-nowrap">
+            {g.seriales.length} serial{g.seriales.length === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <span className="font-sans text-slate-300 text-xs truncate">{g.cliente ?? '—'}</span>
+          <span className="font-mono text-muted text-[11px] whitespace-nowrap shrink-0">{g.fecha}</span>
+        </div>
+        <p className="mt-1 font-mono text-muted text-[10px] truncate">
+          {[...g.skus].map(sku => (descBySku[sku] ? `${sku} — ${descBySku[sku]}` : sku)).join(' · ') || '—'}
+        </p>
+      </button>
+      {open && (
+        <div className="border-t border-white/[0.06] bg-white/[0.015] px-4 py-3 space-y-2.5">
+          {g.seriales.map(s => (
+            <div key={s.serial} className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-mono text-white text-xs">{s.serial}</p>
+                <p className="font-sans text-muted text-[10px] truncate">
+                  {descBySku[s.sku] ? `${s.sku} — ${descBySku[s.sku]}` : s.sku}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                {s.eventos.map((ev, i) => (
+                  <p key={i} className="font-mono text-[10px] whitespace-nowrap">
+                    <span className="text-muted">{DOC_LABEL[ev.doc_type] ?? ev.doc_type}</span>{' '}
+                    <span className="text-slate-300">{ev.doc_number}</span>
+                  </p>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

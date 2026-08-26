@@ -71,10 +71,10 @@ export function POHistory() {
           className="w-44"
         />
 
-        <div className="flex border border-white/[0.12] rounded overflow-hidden text-xs font-mono">
+        <div className="flex max-w-full overflow-x-auto border border-white/[0.12] rounded text-xs font-mono">
           <button
             onClick={() => setStatusFilter('all')}
-            className={`px-3 py-2 transition-colors ${statusFilter === 'all' ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
+            className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${statusFilter === 'all' ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
           >
             All
           </button>
@@ -82,7 +82,7 @@ export function POHistory() {
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`px-3 py-2 transition-colors ${statusFilter === s ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
+              className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${statusFilter === s ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}
             >
               {s}
             </button>

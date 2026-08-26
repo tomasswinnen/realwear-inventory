@@ -22,7 +22,10 @@ const STATUS_STYLES = {
 export function StatusBadge({ status }) {
   const style = STATUS_STYLES[status] ?? 'bg-white/10 text-white/60';
   return (
-    <span className={`inline-block text-xs font-mono px-2 py-0.5 rounded ${style}`}>
+    <span
+      title={status}
+      className={`inline-block max-w-full truncate align-middle whitespace-nowrap text-[10px] sm:text-xs font-mono px-1.5 sm:px-2 py-0.5 rounded ${style}`}
+    >
       {status}
     </span>
   );

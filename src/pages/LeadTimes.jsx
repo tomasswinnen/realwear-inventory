@@ -81,10 +81,10 @@ export function LeadTimes() {
       )}
 
       <div className="flex items-center gap-2">
-        <div className="flex border border-white/[0.12] rounded overflow-hidden text-xs font-mono">
+        <div className="flex max-w-full overflow-x-auto border border-white/[0.12] rounded text-xs font-mono">
           {[['sku', 'By SKU'], ['vendor', 'By Vendor']].map(([v, label]) => (
             <button key={v} onClick={() => setPor(v)}
-              className={`px-3 py-2 transition-colors ${por === v ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}>
+              className={`px-3 py-2 flex-none whitespace-nowrap transition-colors ${por === v ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}>
               {label}
             </button>
           ))}
