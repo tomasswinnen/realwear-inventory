@@ -173,16 +173,16 @@ export function DistributorStock() {
           placeholder="Search SKU, distributor, product…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-72"
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-72"
         />
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {Array.from({ length: 3 }).map((_, i) => <KPISkeleton key={i} />)}
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <KPICard label="Distributors Reporting" value={totals.distributors.toLocaleString()} accent />
           <KPICard label="Total Units On Hand" value={totals.units.toLocaleString()} color="text-white" />
           <KPICard label="SKUs Covered" value={totals.skus.toLocaleString()} color="text-white" />

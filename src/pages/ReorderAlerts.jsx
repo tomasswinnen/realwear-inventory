@@ -151,7 +151,7 @@ export function ReorderAlerts() {
           placeholder="Search SKU…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-56"
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-56"
         />
       </div>
 

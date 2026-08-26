@@ -127,16 +127,16 @@ export function DistributorScorecard() {
           placeholder="Search distributor…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-64"
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-64"
         />
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {Array.from({ length: 3 }).map((_, i) => <KPISkeleton key={i} />)}
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <KPICard label="Distributors Reporting Stock" value={kpis.stockDistributors} accent />
           <KPICard label="Matched to Pipeline" value={kpis.matched} sub="have deals in Sales Pipeline" color="text-success" />
           <KPICard label="Unmatched" value={kpis.unmatched} sub="stock reported, no matching deals" color={kpis.unmatched > 0 ? 'text-warning' : 'text-muted'} />

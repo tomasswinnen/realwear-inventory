@@ -73,7 +73,7 @@ export function LeadTimes() {
       </div>
 
       {loading ? <KPISkeleton count={3} /> : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <KPICard label="Receipts Measured" value={kpis.recepciones.toLocaleString()} />
           <KPICard label="Median Lead Time" value={kpis.mediana != null ? `${kpis.mediana} days` : '—'} />
           <KPICard label="Average Lead Time" value={kpis.promedio != null ? `${kpis.promedio} days` : '—'} />

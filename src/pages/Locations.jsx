@@ -104,11 +104,11 @@ export function Locations() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {Array.from({ length: 3 }).map((_, i) => <KPISkeleton key={i} />)}
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <KPICard label="Portland On Hand" value={totals.portland?.toLocaleString()} accent />
           <KPICard label="Hong Kong On Hand" value={totals.hk?.toLocaleString()} accent />
           <KPICard label="Total On Hand" value={totals.total?.toLocaleString()} color="text-white" />
@@ -121,7 +121,7 @@ export function Locations() {
           placeholder="Search SKU…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-56"
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-56"
         />
         <div className="flex border border-white/[0.12] rounded overflow-hidden text-xs font-mono">
           {[['all', 'All'], ['portland', 'Portland'], ['hk', 'HK']].map(([val, label]) => (

@@ -10,7 +10,15 @@
     margin: 0;
     padding: 0;
     min-height: 100vh;
+    min-height: 100dvh; /* iOS: la barra del navegador cambia el alto real de 100vh */
   }
+  /* iOS hace zoom automatico al enfocar inputs con letra <16px; en pantallas
+     chicas se fuerza 16px para que el foco no agrande toda la pagina. */
+  @media (max-width: 1023px) {
+    input, select, textarea { font-size: 16px; }
+  }
+  /* scroll con inercia en los contenedores de tablas (touch) */
+  .overflow-x-auto { -webkit-overflow-scrolling: touch; }
   body {
     background-color: #0f1923;
     color: #e2e8f0;

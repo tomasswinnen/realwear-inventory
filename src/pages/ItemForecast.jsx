@@ -496,6 +496,7 @@ export function ItemForecast() {
                 Open Transfer Orders · {openTransferOrders.length}
               </h3>
             </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
@@ -529,6 +530,7 @@ export function ItemForecast() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
@@ -542,6 +544,7 @@ export function ItemForecast() {
               {distStockTotal.toLocaleString()} units across {distStock.length} distributor{distStock.length === 1 ? '' : 's'}
             </span>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
@@ -566,6 +569,7 @@ export function ItemForecast() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

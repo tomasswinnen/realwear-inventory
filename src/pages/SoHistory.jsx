@@ -62,7 +62,9 @@ async function fetchSoHistory() {
       for (const t of res.data ?? []) mapa.set(t.tracking, t.so_number);
     }
     for (const c of costos) {
-      const so = mapa.get(c.tracking);
+      // Primero se intenta por tracking (NetSuite); si la factura ya trae la
+      // orden directa (detalle Javelin: shipping_costs.so_number), se usa esa.
+      const so = mapa.get(c.tracking) || c.so_number || null;
       if (!so) continue;
       pagadoPorSo.set(so, (pagadoPorSo.get(so) ?? 0) + (c.cost ?? 0));
     }
@@ -299,7 +301,7 @@ export function SoHistory() {
           placeholder="SO #, customer, status or tracking…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-64"
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-64"
         />
         <label className="flex items-center gap-2 text-xs font-mono text-muted cursor-pointer select-none">
           <input type="checkbox" checked={soloConEnvio} onChange={e => setSoloConEnvio(e.target.checked)}
@@ -380,8 +382,8 @@ export function SoHistory() {
           <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
             Click an order to see what shipped in it (items and serials).
             Showing up to 500 rows — search to narrow, or Export Excel for everything.
-            "Shipping paid" fills in as carrier invoices are loaded; the link between an invoice
-            and an order is the tracking number.
+            "Shipping paid" fills in as carrier invoices are loaded; costs are matched to the
+            order by tracking number, or directly when the invoice itemizes the order (Javelin).
           </p>
         </div>
       )}

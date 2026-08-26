@@ -74,7 +74,7 @@ export function Layout() {
         `}
       >
         {/* Logo */}
-        <div className="flex items-center gap-2 px-4 py-5 border-b border-white/[0.08]">
+        <div className="flex items-center gap-2 px-4 pb-5 pt-[calc(1.25rem+env(safe-area-inset-top))] border-b border-white/[0.08]">
           <div className="w-6 h-6 bg-accent rounded flex items-center justify-center">
             <span className="text-white font-bold text-xs font-mono">RW</span>
           </div>
@@ -108,7 +108,7 @@ export function Layout() {
           ))}
         </nav>
 
-        <div className="px-4 py-4 border-t border-white/[0.08] space-y-3">
+        <div className="px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-white/[0.08] space-y-3">
           <p className="text-[10px] text-muted font-mono uppercase tracking-widest">
             realwear.com
           </p>
@@ -124,7 +124,7 @@ export function Layout() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile topbar */}
-        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-white/[0.08] bg-[#0d1620]">
+        <header className="lg:hidden sticky top-0 z-10 flex items-center gap-3 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] border-b border-white/[0.08] bg-[#0d1620]">
           <button
             onClick={() => setSidebarOpen(true)}
             className="text-slate-400 hover:text-white p-1"
@@ -139,7 +139,7 @@ export function Layout() {
           </span>
         </header>
 
-        <main className="flex-1 p-4 lg:p-6 overflow-auto">
+        <main className="flex-1 p-4 lg:p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] overflow-auto">
           <Outlet />
         </main>
       </div>

@@ -200,7 +200,7 @@ export function Serials() {
           placeholder="Serial, SO #, customer, document # or SKU…"
           value={input}
           onChange={e => setInput(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-80"
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-80"
         />
         <button type="submit"
           className="px-4 py-2 rounded bg-accent text-white text-xs font-mono hover:bg-accent/80 transition-colors">
