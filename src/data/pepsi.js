@@ -21,7 +21,8 @@ export const PEPSI = {
   ],
   items: [
     {
-      sku: '127128', name: 'RealWear Navigator 520',
+      // OJO: en NetSuite/Supabase el SKU es con asterisco
+      sku: '127128*', name: 'RealWear Navigator 520',
       description: 'Head Mounted Tablet Navigator 520, 720P display, incl. Workband 2 + USB-C cable. Model T21G',
       category: 'device', uom: 'EA', unit_price: 1717.20, serialized: true,
       qty_per_kit: 1, qty_required: 1537,
