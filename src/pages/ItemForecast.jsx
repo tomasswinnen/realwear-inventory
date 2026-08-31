@@ -6,6 +6,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
 } from 'recharts';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { supabase, excludeSkus } from '../lib/supabase';
 import { SkuNoteBadge } from '../components/SkuNoteBadge';
 import { StatusBadge } from '../components/StatusBadge';
@@ -111,6 +112,105 @@ function HistoricTooltip({ active, payload, label }) {
   );
 }
 
+function OnHandTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={TT_STYLE}>
+      <p className="text-slate-400 text-[10px] mb-1">{label}</p>
+      <p className="text-white font-medium">{fmtNum(payload[0]?.value)} on hand</p>
+    </div>
+  );
+}
+
+// Historial diario de unidades en stock (misma fuente que Inventory Trends,
+// filtrada por SKU). Linea, no area: el eje arranca donde estan los datos para
+// que el movimiento se vea, asi que un relleno hasta la base mentiria.
+function OnHandHistoryCard({ hist, loading }) {
+  const [modo, setModo] = useState('auto'); // auto | day | week
+  const esMobile = useIsMobile();
+
+  const { chart, dias, semanal } = useMemo(() => {
+    const porDia = (hist ?? [])
+      .filter(h => h.on_hand != null && h.fecha)
+      .map(h => ({ fecha: String(h.fecha), label: String(h.fecha).slice(5), qty: h.on_hand }));
+    // semanal = ultimo snapshot de cada semana (lunes como frontera)
+    const porSemana = [];
+    let semanaAct = null;
+    for (const f of porDia) {
+      const d = new Date(f.fecha + 'T00:00:00');
+      const lunes = new Date(d);
+      lunes.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const clave = lunes.toISOString().slice(0, 10);
+      if (clave !== semanaAct) { porSemana.push({ ...f }); semanaAct = clave; }
+      else porSemana[porSemana.length - 1] = { ...f };
+    }
+    const usarSemanal = modo === 'week' || (modo === 'auto' && porDia.length > 45);
+    return { chart: usarSemanal ? porSemana : porDia, dias: porDia.length, semanal: usarSemanal };
+  }, [hist, modo]);
+
+  return (
+    <div className="rounded-xl p-5" style={{ background: '#162030', border: '1px solid rgba(148,163,184,0.08)' }}>
+      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-sans font-semibold text-white">On-Hand History</h3>
+          <p className="text-[11px] font-mono text-slate-500 mt-0.5">
+            {semanal ? 'One point per week (last snapshot)' : 'One snapshot per day'} · both warehouses combined
+          </p>
+        </div>
+        {dias > 14 && (
+          <div className="flex max-w-full overflow-x-auto border border-white/[0.12] rounded text-[11px] font-mono">
+            {[['day', 'Daily'], ['week', 'Weekly']].map(([v, label]) => (
+              <button key={v} onClick={() => setModo(v)}
+                className={`px-2.5 py-1.5 flex-none whitespace-nowrap transition-colors ${
+                  (modo === v || (modo === 'auto' && semanal === (v === 'week')))
+                    ? 'bg-accent text-white' : 'text-muted hover:text-white hover:bg-white/5'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {loading ? (
+        <Skeleton className="w-full rounded-lg" style={{ height: 200 }} />
+      ) : chart.length < 2 ? (
+        <p className="text-slate-600 font-mono text-xs text-center py-14">
+          Building up — the pipeline saves one stock snapshot per day for this SKU.
+          Come back in a few days to see the curve.
+        </p>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chart} margin={{ top: 6, right: 8, left: -8, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.05)" />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'DM Mono' }}
+              axisLine={false} tickLine={false}
+              minTickGap={esMobile ? 32 : 20}
+            />
+            <YAxis
+              domain={['auto', 'auto']}
+              allowDecimals={false}
+              tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'DM Mono' }}
+              axisLine={false} tickLine={false}
+              tickFormatter={v => v.toLocaleString()}
+            />
+            <Tooltip content={<OnHandTooltip />} cursor={{ stroke: 'rgba(148,163,184,0.15)', strokeWidth: 1 }} />
+            <Line
+              type="monotone"
+              dataKey="qty"
+              name="On hand"
+              stroke="#0ea5e9"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: '#0ea5e9', stroke: '#0d1a27', strokeWidth: 2 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 function ForecastTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
@@ -136,7 +236,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes, marginRes, leadRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes, marginRes, leadRes, onHandHistRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -165,6 +265,10 @@ async function fetchItem(sku) {
     supabase.from('sku_margins').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('lead_times').select('po_number, vendor, po_date, receipt_date, dias')
       .eq('sku', sku).order('receipt_date', { ascending: false }).limit(50),
+    // Historial diario de stock (misma tabla que Inventory Trends). Si el SKU
+    // todavia no tiene snapshots, la tarjeta muestra su estado vacio.
+    supabase.from('inventory_history').select('fecha, on_hand')
+      .eq('sku', sku).order('fecha', { ascending: true }).limit(800),
   ]);
   console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
 
@@ -184,6 +288,7 @@ async function fetchItem(sku) {
     distStock: distStockRes.data ?? [],
     margin: marginRes?.data ?? null,
     leadTimes: leadRes?.data ?? [],
+    onHandHist: onHandHistRes?.error ? [] : onHandHistRes?.data ?? [],
   };
 }
 
@@ -743,6 +848,9 @@ export function ItemForecast() {
                 </LineChart>
               </ResponsiveContainer>
             </ChartCard>
+
+            {/* Historial diario/semanal de stock */}
+            <OnHandHistoryCard hist={data?.onHandHist} loading={loading} />
           </div>
 
           {/* ── Projection panel ── */}
