@@ -56,6 +56,10 @@ export const PEPSI = {
       qty_by_po: { POINC110038312: 150, POINC110039090: 180 },
       qty_ordered_total: 330, qty_shipped: 0, status: 'confirmed',
       note: '93 units short of kit requirement',
+      // La PO de reposicion abierta esta en riesgo: el chip del cargador es
+      // EOL. No se cuenta como stock entrante en el calculo de cobertura.
+      incoming_at_risk: true,
+      incoming_risk_note: 'Incoming PO at risk — charger chip is EOL, may not arrive',
     },
     {
       sku: '127125', name: 'Workband 2',

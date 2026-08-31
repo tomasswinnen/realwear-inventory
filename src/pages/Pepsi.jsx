@@ -58,7 +58,9 @@ export function Pepsi() {
     const hk = s?.on_hand_hk ?? null;
     const incoming = inc?.qty ?? 0;
     const porEnviar = item.qty_ordered_total - item.qty_shipped;
-    const disponible = (pdx ?? 0) + (hk ?? 0) + incoming;
+    // una PO marcada en riesgo (ej: chip EOL) no cuenta como entrante
+    const incomingUtil = item.incoming_at_risk ? 0 : incoming;
+    const disponible = (pdx ?? 0) + (hk ?? 0) + incomingUtil;
     const falta = s ? Math.max(0, porEnviar - disponible) : null;
     return { ...item, pdx, hk, incoming, porEnviar, falta };
   });
@@ -135,12 +137,17 @@ export function Pepsi() {
                   Pepsi: {f.qty_ordered_total.toLocaleString()} ({pos.map(p => `${f.qty_by_po[p.po_number] ?? 0} ${p.tranche}`).join(' + ')})
                   {f.qty_shipped > 0 && ` · shipped ${f.qty_shipped.toLocaleString()}`}
                 </p>
+                {f.incoming_at_risk && f.incoming > 0 && (
+                  <p className="font-mono text-warning text-[10px] mt-1">{f.incoming_risk_note}</p>
+                )}
                 <div className="mt-2.5 grid grid-cols-4 gap-1.5">
                   {[
                     ['To Ship', f.porEnviar.toLocaleString(), 'text-white'],
                     ['PDX', num(f.pdx), 'text-slate-300'],
                     ['HK', num(f.hk), 'text-slate-300'],
-                    ['Incoming', f.incoming ? f.incoming.toLocaleString() : '—', f.incoming ? 'text-success' : 'text-muted'],
+                    [f.incoming_at_risk ? 'At Risk' : 'Incoming',
+                      f.incoming ? f.incoming.toLocaleString() : '—',
+                      f.incoming ? (f.incoming_at_risk ? 'text-warning line-through decoration-warning/50' : 'text-success') : 'text-muted'],
                   ].map(([lbl, val, cls]) => (
                     <div key={lbl} className="rounded-lg bg-white/[0.03] px-1 py-1.5 text-center">
                       <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider">{lbl}</p>
@@ -185,7 +192,16 @@ export function Pepsi() {
                       <td className="px-4 py-2.5 font-mono text-slate-300">{num(f.pdx)}</td>
                       <td className="px-4 py-2.5 font-mono text-slate-300">{num(f.hk)}</td>
                       <td className="px-4 py-2.5 font-mono">
-                        {f.incoming > 0 ? <span className="text-success">{f.incoming.toLocaleString()}</span> : <span className="text-muted">—</span>}
+                        {f.incoming > 0 ? (
+                          f.incoming_at_risk ? (
+                            <div>
+                              <span className="text-warning line-through decoration-warning/50">{f.incoming.toLocaleString()}</span>
+                              <p className="text-[10px] text-warning mt-0.5 whitespace-nowrap">EOL chip — at risk, not counted</p>
+                            </div>
+                          ) : (
+                            <span className="text-success">{f.incoming.toLocaleString()}</span>
+                          )
+                        ) : <span className="text-muted">—</span>}
                       </td>
                       <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                         {f.falta == null
@@ -214,9 +230,10 @@ export function Pepsi() {
       {/* Notas de la orden (lo fino: workband, clips, cargador 65W) */}
       <section className="space-y-1.5">
         <h2 className="text-sm font-sans font-semibold text-white">Order notes</h2>
-        {PEPSI.items.filter(i => i.note).map(i => (
+        {PEPSI.items.filter(i => i.note || i.incoming_risk_note).map(i => (
           <p key={i.sku} className="text-[11px] font-mono text-muted">
             <span className="text-slate-300">{i.sku}</span> — {i.note}
+            {i.incoming_risk_note && <span className="text-warning"> · {i.incoming_risk_note}</span>}
           </p>
         ))}
       </section>
