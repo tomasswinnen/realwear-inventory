@@ -24,6 +24,7 @@ const Margins = lazy(() => import('./pages/Margins').then(m => ({ default: m.Mar
 const Trends = lazy(() => import('./pages/Trends').then(m => ({ default: m.Trends })));
 const Serials = lazy(() => import('./pages/Serials').then(m => ({ default: m.Serials })));
 const SoHistory = lazy(() => import('./pages/SoHistory').then(m => ({ default: m.SoHistory })));
+const Pepsi = lazy(() => import('./pages/Pepsi').then(m => ({ default: m.Pepsi })));
 
 function PageFallback() {
   return (
@@ -72,6 +73,7 @@ export default function App() {
             <Route path="trends" element={<Suspense fallback={<PageFallback />}><Trends /></Suspense>} />
             <Route path="serials" element={<Suspense fallback={<PageFallback />}><Serials /></Suspense>} />
             <Route path="so-history" element={<Suspense fallback={<PageFallback />}><SoHistory /></Suspense>} />
+            <Route path="pepsi" element={<Suspense fallback={<PageFallback />}><Pepsi /></Suspense>} />
           </Route>
         </Routes>
       </ErrorBoundary>

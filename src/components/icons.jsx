@@ -133,6 +133,12 @@ const PATHS = {
       <path d="M6 6l12 12M18 6 6 18" />
     </>
   ),
+  flag: (
+    <>
+      <path d="M6 21V4" />
+      <path d="M6 4.5h11.5l-3 4.5 3 4.5H6" />
+    </>
+  ),
 };
 
 export function Icon({ name, className = 'w-5 h-5', strokeWidth = 1.8 }) {
