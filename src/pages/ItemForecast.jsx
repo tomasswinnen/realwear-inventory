@@ -116,8 +116,13 @@ function OnHandTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
     <div style={TT_STYLE}>
-      <p className="text-slate-400 text-[10px] mb-1">{label}</p>
-      <p className="text-white font-medium">{fmtNum(payload[0]?.value)} on hand</p>
+      <p className="text-slate-400 text-[10px] mb-1.5">{label}</p>
+      {payload.map(p => (
+        <div key={p.dataKey} className="flex items-center justify-between gap-6">
+          <span style={{ color: p.color }} className="text-[10px]">{p.name}</span>
+          <span className="text-white">{fmtNum(p.value)}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -129,10 +134,14 @@ function OnHandHistoryCard({ hist, loading }) {
   const [modo, setModo] = useState('auto'); // auto | day | week
   const esMobile = useIsMobile();
 
-  const { chart, dias, semanal } = useMemo(() => {
+  const { chart, dias, semanal, hayDesglose } = useMemo(() => {
     const porDia = (hist ?? [])
       .filter(h => h.on_hand != null && h.fecha)
-      .map(h => ({ fecha: String(h.fecha), label: String(h.fecha).slice(5), qty: h.on_hand }));
+      .map(h => ({
+        fecha: String(h.fecha), label: String(h.fecha).slice(5), qty: h.on_hand,
+        pdx: h.on_hand_portland ?? null, hk: h.on_hand_hk ?? null,
+      }));
+    const hayDesglose = porDia.some(f => f.pdx != null || f.hk != null);
     // semanal = ultimo snapshot de cada semana (lunes como frontera)
     const porSemana = [];
     let semanaAct = null;
@@ -145,7 +154,7 @@ function OnHandHistoryCard({ hist, loading }) {
       else porSemana[porSemana.length - 1] = { ...f };
     }
     const usarSemanal = modo === 'week' || (modo === 'auto' && porDia.length > 45);
-    return { chart: usarSemanal ? porSemana : porDia, dias: porDia.length, semanal: usarSemanal };
+    return { chart: usarSemanal ? porSemana : porDia, dias: porDia.length, semanal: usarSemanal, hayDesglose };
   }, [hist, modo]);
 
   return (
@@ -154,7 +163,8 @@ function OnHandHistoryCard({ hist, loading }) {
         <div>
           <h3 className="text-sm font-sans font-semibold text-white">On-Hand History</h3>
           <p className="text-[11px] font-mono text-slate-500 mt-0.5">
-            {semanal ? 'One point per week (last snapshot)' : 'One snapshot per day'} · both warehouses combined
+            {semanal ? 'One point per week (last snapshot)' : 'One snapshot per day'}
+            {hayDesglose ? ' · total (blue) vs Portland (amber) vs Hong Kong (violet)' : ' · both warehouses combined'}
           </p>
         </div>
         {dias > 14 && (
@@ -195,15 +205,42 @@ function OnHandHistoryCard({ hist, loading }) {
               tickFormatter={v => v.toLocaleString()}
             />
             <Tooltip content={<OnHandTooltip />} cursor={{ stroke: 'rgba(148,163,184,0.15)', strokeWidth: 1 }} />
+            {hayDesglose && (
+              <Legend wrapperStyle={{ fontSize: 11, fontFamily: 'DM Mono', color: '#64748b', paddingTop: 10 }} />
+            )}
             <Line
               type="monotone"
               dataKey="qty"
-              name="On hand"
+              name="Total"
               stroke="#0ea5e9"
               strokeWidth={2}
               dot={false}
               activeDot={{ r: 4, fill: '#0ea5e9', stroke: '#0d1a27', strokeWidth: 2 }}
             />
+            {hayDesglose && (
+              <Line
+                type="monotone"
+                dataKey="pdx"
+                name="Portland"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={false}
+                connectNulls={false}
+                activeDot={{ r: 4, fill: '#f59e0b', stroke: '#0d1a27', strokeWidth: 2 }}
+              />
+            )}
+            {hayDesglose && (
+              <Line
+                type="monotone"
+                dataKey="hk"
+                name="Hong Kong"
+                stroke="#a78bfa"
+                strokeWidth={2}
+                dot={false}
+                connectNulls={false}
+                activeDot={{ r: 4, fill: '#a78bfa', stroke: '#0d1a27', strokeWidth: 2 }}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       )}
@@ -267,7 +304,7 @@ async function fetchItem(sku) {
       .eq('sku', sku).order('receipt_date', { ascending: false }).limit(50),
     // Historial diario de stock (misma tabla que Inventory Trends). Si el SKU
     // todavia no tiene snapshots, la tarjeta muestra su estado vacio.
-    supabase.from('inventory_history').select('fecha, on_hand')
+    supabase.from('inventory_history').select('*')
       .eq('sku', sku).order('fecha', { ascending: true }).limit(800),
   ]);
   console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
