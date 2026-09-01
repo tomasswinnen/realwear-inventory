@@ -290,7 +290,7 @@ async function fetchItem(sku) {
     supabase.from('po_history').select('*')
       .eq('sku', sku).order('created_at', { ascending: false }),
     supabase.from('demand_forecast').select('avg_3m, avg_6m').eq('sku', sku).maybeSingle(),
-    supabase.from('open_pos').select('po_number, po_date, vendor, status, sku, qty_ordered, qty_received, qty_open, unit_price, amount_remaining')
+    supabase.from('open_pos').select('*')
       .eq('sku', sku),
     supabase.from('open_transfer_orders').select('transfer_order_number, transfer_date, vendor, status, origin_location, destination_location, sku, qty_ordered, qty_open, unit_price, amount_remaining')
       .eq('sku', sku),
@@ -445,13 +445,14 @@ export function ItemForecast() {
     for (const p of data.openPos ?? []) {
       const g = openAgg.get(p.po_number) ?? {
         po_number: p.po_number, vendor: p.vendor,
-        qty_ordered: 0, qty_open: 0, qty_received: 0,
+        qty_ordered: 0, qty_open: 0, qty_received: 0, qty_billed: 0,
         unit_cost: p.unit_price, status: p.status, date: p.po_date ?? null,
         amount_remaining: 0, source: 'open',
       };
       g.qty_ordered += p.qty_ordered ?? 0;
       g.qty_open += p.qty_open ?? 0;
       g.qty_received += p.qty_received ?? 0;
+      g.qty_billed += p.qty_billed ?? 0;
       g.amount_remaining += p.amount_remaining ?? 0;
       openAgg.set(p.po_number, g);
     }
@@ -1061,11 +1062,18 @@ export function ItemForecast() {
                     <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>{po.vendor ?? '—'}</td>
                     <td className="px-4 py-2.5 font-mono text-slate-300">{(po.qty_ordered ?? 0).toLocaleString()}</td>
                     <td className="px-4 py-2.5 font-mono">
-                      {po.source === 'open'
-                        ? <span className={po.qty_received > 0 ? 'text-success' : 'text-muted'}>{(po.qty_received ?? 0).toLocaleString()}</span>
-                        : /billed|received|closed/i.test(po.status ?? '')
-                          ? <span className="text-muted">{(po.qty_ordered ?? 0).toLocaleString()}</span>
-                          : <span className="text-muted">—</span>}
+                      {po.source === 'open' ? (
+                        <div>
+                          <span className={po.qty_received > 0 ? 'text-success' : 'text-muted'}>{(po.qty_received ?? 0).toLocaleString()}</span>
+                          {(po.qty_billed ?? 0) > (po.qty_received ?? 0) && (
+                            <p className="text-[10px] text-warning mt-0.5 whitespace-nowrap">
+                              {(po.qty_billed ?? 0).toLocaleString()} billed — receipts pending
+                            </p>
+                          )}
+                        </div>
+                      ) : /billed|received|closed/i.test(po.status ?? '')
+                        ? <span className="text-muted">{(po.qty_ordered ?? 0).toLocaleString()}</span>
+                        : <span className="text-muted">—</span>}
                     </td>
                     <td className="px-4 py-2.5 font-mono">
                       {po.source === 'open'

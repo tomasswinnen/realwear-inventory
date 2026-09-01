@@ -20,7 +20,7 @@ async function fetchStockPepsi() {
       .select('sku, on_hand_portland, on_hand_hk, updated_at')
       .in('sku', SKUS_PEPSI).order('updated_at', { ascending: false }),
     supabase.from('open_pos')
-      .select('sku, po_number, qty_ordered, qty_received, qty_open, po_date, status')
+      .select('*')
       .in('sku', SKUS_PEPSI),
   ]);
   const stock = {};
@@ -212,6 +212,9 @@ export function Pepsi() {
                               {(f.posDetalle ?? []).slice(0, 4).map(p => (
                                 <div key={p.po_number} className="whitespace-nowrap">
                                   {p.po_number} · {(p.qty_received ?? 0).toLocaleString()}/{(p.qty_ordered ?? 0).toLocaleString()} recd · {(p.qty_open ?? 0).toLocaleString()} open
+                                  {(p.qty_billed ?? 0) > (p.qty_received ?? 0) && (
+                                    <span className="text-warning"> · {(p.qty_billed ?? 0).toLocaleString()} billed, receipts pending</span>
+                                  )}
                                 </div>
                               ))}
                             </div>
