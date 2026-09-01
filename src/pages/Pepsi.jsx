@@ -20,7 +20,7 @@ async function fetchStockPepsi() {
       .select('sku, on_hand_portland, on_hand_hk, updated_at')
       .in('sku', SKUS_PEPSI).order('updated_at', { ascending: false }),
     supabase.from('open_pos')
-      .select('sku, po_number, qty_open, po_date, status')
+      .select('sku, po_number, qty_ordered, qty_received, qty_open, po_date, status')
       .in('sku', SKUS_PEPSI),
   ]);
   const stock = {};
@@ -62,7 +62,7 @@ export function Pepsi() {
     const incomingUtil = item.incoming_at_risk ? 0 : incoming;
     const disponible = (pdx ?? 0) + (hk ?? 0) + incomingUtil;
     const falta = s ? Math.max(0, porEnviar - disponible) : null;
-    return { ...item, pdx, hk, incoming, porEnviar, falta };
+    return { ...item, pdx, hk, incoming, porEnviar, falta, posDetalle: inc?.pos ?? [] };
   });
   const itemsCortos = filas.filter(f => f.falta != null && f.falta > 0).length;
 
@@ -140,6 +140,13 @@ export function Pepsi() {
                 {f.incoming_at_risk && f.incoming > 0 && (
                   <p className="font-mono text-warning text-[10px] mt-1">{f.incoming_risk_note}</p>
                 )}
+                {f.incoming > 0 && (
+                  <p className="font-mono text-muted text-[10px] mt-1">
+                    {(f.posDetalle ?? []).slice(0, 3).map(p =>
+                      `${p.po_number}: ${(p.qty_received ?? 0).toLocaleString()}/${(p.qty_ordered ?? 0).toLocaleString()} recd, ${(p.qty_open ?? 0).toLocaleString()} open`
+                    ).join(' · ')}
+                  </p>
+                )}
                 <div className="mt-2.5 grid grid-cols-4 gap-1.5">
                   {[
                     ['To Ship', f.porEnviar.toLocaleString(), 'text-white'],
@@ -193,14 +200,22 @@ export function Pepsi() {
                       <td className="px-4 py-2.5 font-mono text-slate-300">{num(f.hk)}</td>
                       <td className="px-4 py-2.5 font-mono">
                         {f.incoming > 0 ? (
-                          f.incoming_at_risk ? (
-                            <div>
-                              <span className="text-warning line-through decoration-warning/50">{f.incoming.toLocaleString()}</span>
+                          <div>
+                            {f.incoming_at_risk
+                              ? <span className="text-warning line-through decoration-warning/50">{f.incoming.toLocaleString()}</span>
+                              : <span className="text-success">{f.incoming.toLocaleString()}</span>}
+                            <span className="text-muted text-[10px]"> to receive</span>
+                            {f.incoming_at_risk && (
                               <p className="text-[10px] text-warning mt-0.5 whitespace-nowrap">EOL chip — at risk, not counted</p>
+                            )}
+                            <div className="text-[10px] text-muted mt-0.5">
+                              {(f.posDetalle ?? []).slice(0, 4).map(p => (
+                                <div key={p.po_number} className="whitespace-nowrap">
+                                  {p.po_number} · {(p.qty_received ?? 0).toLocaleString()}/{(p.qty_ordered ?? 0).toLocaleString()} recd · {(p.qty_open ?? 0).toLocaleString()} open
+                                </div>
+                              ))}
                             </div>
-                          ) : (
-                            <span className="text-success">{f.incoming.toLocaleString()}</span>
-                          )
+                          </div>
                         ) : <span className="text-muted">—</span>}
                       </td>
                       <td className="px-4 py-2.5 font-mono whitespace-nowrap">
