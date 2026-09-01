@@ -441,12 +441,21 @@ export function ItemForecast() {
       date: p.po_date ?? openDateByPO[p.po_number] ?? p.created_at ?? null,
       source: 'history',
     }));
-    const fromOpen = (data.openPos ?? []).map(p => ({
-      po_number: p.po_number, vendor: p.vendor,
-      qty_ordered: p.qty_ordered, qty_open: p.qty_open,
-      unit_cost: p.unit_price, status: p.status, date: p.po_date ?? null,
-      amount_remaining: p.amount_remaining, source: 'open',
-    }));
+    const openAgg = new Map();
+    for (const p of data.openPos ?? []) {
+      const g = openAgg.get(p.po_number) ?? {
+        po_number: p.po_number, vendor: p.vendor,
+        qty_ordered: 0, qty_open: 0, qty_received: 0,
+        unit_cost: p.unit_price, status: p.status, date: p.po_date ?? null,
+        amount_remaining: 0, source: 'open',
+      };
+      g.qty_ordered += p.qty_ordered ?? 0;
+      g.qty_open += p.qty_open ?? 0;
+      g.qty_received += p.qty_received ?? 0;
+      g.amount_remaining += p.amount_remaining ?? 0;
+      openAgg.set(p.po_number, g);
+    }
+    const fromOpen = [...openAgg.values()];
     const byPO = new Map();
     for (const po of [...fromHistory, ...fromOpen]) {
       if (!byPO.has(po.po_number) || po.source === 'open') byPO.set(po.po_number, po);
@@ -1030,7 +1039,7 @@ export function ItemForecast() {
             <table className="w-full text-xs">
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-                  {['Date', 'PO Number', 'Vendor', 'Qty', 'Status', 'Amount'].map(h => (
+                  {['Date', 'PO Number', 'Vendor', 'Ordered', 'Received', 'Open', 'Status', 'Amount'].map(h => (
                     <th
                       key={h}
                       className="px-4 py-2.5 text-left text-[10px] font-sans font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap"
@@ -1050,7 +1059,19 @@ export function ItemForecast() {
                     <td className="px-4 py-2.5 font-mono text-slate-400 whitespace-nowrap">{fmtDate(po.date)}</td>
                     <td className="px-4 py-2.5 font-mono text-slate-300">{po.po_number ?? '—'}</td>
                     <td className="px-4 py-2.5 text-muted font-sans max-w-[200px] truncate" title={po.vendor ?? undefined}>{po.vendor ?? '—'}</td>
-                    <td className="px-4 py-2.5 font-mono text-white">{(po.qty_open ?? po.qty_ordered ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-300">{(po.qty_ordered ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 font-mono">
+                      {po.source === 'open'
+                        ? <span className={po.qty_received > 0 ? 'text-success' : 'text-muted'}>{(po.qty_received ?? 0).toLocaleString()}</span>
+                        : /billed|received|closed/i.test(po.status ?? '')
+                          ? <span className="text-muted">{(po.qty_ordered ?? 0).toLocaleString()}</span>
+                          : <span className="text-muted">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono">
+                      {po.source === 'open'
+                        ? <span className="text-white font-medium">{(po.qty_open ?? 0).toLocaleString()}</span>
+                        : <span className="text-muted">—</span>}
+                    </td>
                     <td className="px-4 py-2.5"><StatusBadge status={po.status} /></td>
                     <td className="px-4 py-2.5 font-mono text-white">
                       {po.amount_remaining != null
