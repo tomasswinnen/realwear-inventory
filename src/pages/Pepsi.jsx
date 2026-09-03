@@ -103,11 +103,16 @@ export function Pepsi() {
         </div>
       )}
 
-      {pos[0].amendment_pending && (
-        <p className="text-[11px] font-mono text-warning">
-          {pos[0].po_number}: amendment pending — {pos[0].amendment_pending}
-        </p>
-      )}
+      <div className="space-y-1">
+        {PEPSI.program_note && (
+          <p className="text-[11px] font-mono text-warning">{PEPSI.program_note}</p>
+        )}
+        {pos.filter(p => p.note).map(p => (
+          <p key={p.po_number} className="text-[11px] font-mono text-muted">
+            {p.po_number}: {p.note}
+          </p>
+        ))}
+      </div>
 
       {/* La tabla que importa: pedido vs stock vs entrando */}
       <section className="space-y-2">
