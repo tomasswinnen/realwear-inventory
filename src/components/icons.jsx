@@ -78,6 +78,13 @@ const PATHS = {
       <path d="M10 12.5h4" />
     </>
   ),
+  card: (
+    <>
+      <rect x="2.8" y="5.5" width="18.4" height="13" rx="2" />
+      <path d="M2.8 9.8h18.4" />
+      <path d="M6.2 14.6h4" />
+    </>
+  ),
   dollar: (
     <>
       <circle cx="12" cy="12" r="8.5" />

@@ -24,6 +24,7 @@ const NAV_SECTIONS = [
     { to: '/on-order',    label: 'On Order',        icon: 'box' },
     { to: '/po-history',  label: 'PO History',      icon: 'clipboard' },
     { to: '/lead-times',  label: 'Lead Times',      icon: 'clock' },
+    { to: '/payments',    label: 'Payments',        icon: 'card' },
   ]},
   { section: 'Sales', items: [
     { to: '/backlog',     label: 'Open Sales Orders', icon: 'receipt' },
