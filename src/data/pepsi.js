@@ -1,4 +1,4 @@
-// Programa PepsiCo — datos de la orden cargados a mano (2026-09-03).
+// Programa PepsiCo — datos de la orden cargados a mano (2026-09-10).
 // Fuente: POs FINALES de Peak Technologies (Interim Price Agreement,
 // "Peak / Pepsi Final Hardware POs" — versiones 9.2.26 F) + kit list PepsiCo.
 // qty_shipped se actualiza a mano hasta que el programa termine.
@@ -8,20 +8,29 @@ export const PEPSI = {
   program: 'WES Navigator 520 deployment',
   total_kits: 1537,
   currency: 'USD',
-  // Del mail de Ken Brenner (2026-09-03): las POs de hardware no se procesan
-  // hasta que llegue la Service PO (Peak esta agregando Cloud Ultra).
-  program_note: 'Final POs received 9/3 — hold processing until Peak sends the Service PO (Cloud Ultra)',
+  // Estado 9/10: llego la Service PO de Peak -> SO20195 en NetSuite (9/2),
+  // servicios para los 1,537 kits incl. ARIOS Cloud Ultra; fulfilled 9/10,
+  // pending billing. La PO Q1 de hardware sigue sin cargarse en NetSuite.
+  program_note: 'Q1 2027 hardware PO not entered in NetSuite yet',
+  service_order: {
+    so_number: 'SO20195', date: '2026-09-02', total: 977716.44,
+    detail: 'Warranty $385,940.70 · Support $195,045.30 · RMA pool $66,398.40 · ARIOS Cloud Ultra $330,332.04 — for all 1,537 kits · fulfilled 9/10, pending billing',
+  },
+  // Mail de Timon (9/3) con los PDFs de las dos POs finales de hardware
+  po_email: 'https://outlook.office365.com/owa/?ItemID=AAMkADEwZGQxZDU1LWY3YzUtNGZlZC1hZmE2LTg2MGRjYWU1OWRiNwBGAAAAAAATk%2F8Xj0YLTIdroYUHAFJ2BwAzCI4YJJD%2BTKdnqF547uDVAAAAAAEMAAAzCI4YJJD%2BTKdnqF547uDVAAGq%2BXqAAAA%3D&exvsurl=1&viewmodel=ReadMessageItem',
   purchase_orders: [
     {
       po_number: 'POINC110038312', date: '2026-08-05', kits: 855, tranche: 'Q4 2026',
       total: 1837331.00,
-      note: 'Final PO (9/2/26) — includes $171,000 expedite fee ($200 × 855) and corrected Workband price',
+      // SO en NetSuite: con esto la pagina saca shipped/open en vivo del backlog
+      so_number: 'SO20159',
+      note: 'Final PO (9/2/26, incl. $171,000 expedite fee) — in NetSuite as SO20159 (8/28), partially fulfilled',
     },
     {
       po_number: 'POINC110039090', date: '2026-08-11', kits: 682, tranche: 'Q1 2027',
       total: 1340036.40,
       ship_not_before: '2026-11-01',
-      note: 'Final PO (9/2/26) — do not ship until after 11/1/2026',
+      note: 'Final PO (9/2/26) — do not ship until after 11/1/2026 · not entered in NetSuite yet',
     },
   ],
   items: [
@@ -33,7 +42,7 @@ export const PEPSI = {
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 855, POINC110039090: 682 },
       qty_ordered_total: 1537, qty_shipped: 455, status: 'confirmed',
-      note: '26 additional units shipped to Pepsi spare pool outside these POs (SO20129: 1, SO20150: 25)',
+      note: 'SO20159 fulfillment = 339 shipped 8/28 (IF20405) + ~116 earlier units invoiced on it. Outside these POs: 26 spare-pool units (SO20129: 1, SO20150: 25) + 17 on small Peak SOs Jul-Aug',
     },
     {
       sku: '127108', name: 'Battery Pack Navigator 500 Series',
@@ -60,7 +69,7 @@ export const PEPSI = {
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: { POINC110038312: 180, POINC110039090: 180 },
       qty_ordered_total: 360, qty_shipped: 0, status: 'confirmed',
-      note: '63 units short of kit requirement',
+      note: '63 units short of kit requirement. Q4 tranche (180): 156 ready from stock, 24 backordered against the at-risk PO (per 9/7 backorder report)',
       // La PO de reposicion abierta esta en riesgo: el chip del cargador es
       // EOL. No se cuenta como stock entrante en el calculo de cobertura.
       incoming_at_risk: true,

@@ -13,15 +13,21 @@ import { PEPSI } from '../data/pepsi';
 // Supabase, asi que se actualizan solos con el pipeline.
 
 const SKUS_PEPSI = PEPSI.items.map(i => i.sku);
+// SOs de NetSuite ligadas a las POs de Peak (ej: SO20159): de ahi sale el
+// shipped/open en vivo, sin tener que actualizar qty_shipped a mano.
+const SOS_PEPSI = PEPSI.purchase_orders.map(p => p.so_number).filter(Boolean);
 
 async function fetchStockPepsi() {
-  const [snapRes, posRes] = await Promise.all([
+  const [snapRes, posRes, soRes] = await Promise.all([
     supabase.from('inventory_snapshot')
       .select('sku, on_hand_portland, on_hand_hk, updated_at')
       .in('sku', SKUS_PEPSI).order('updated_at', { ascending: false }),
     supabase.from('open_pos')
       .select('*')
       .in('sku', SKUS_PEPSI),
+    supabase.from('sales_backlog')
+      .select('so_number, sku, qty_ordered, qty_open')
+      .in('so_number', SOS_PEPSI.length ? SOS_PEPSI : ['__nada__']),
   ]);
   const stock = {};
   for (const s of snapRes.data ?? []) {
@@ -33,7 +39,15 @@ async function fetchStockPepsi() {
     entrando[p.sku].qty += p.qty_open ?? 0;
     entrando[p.sku].pos.push(p);
   }
-  return { stock, entrando, hayDatos: !snapRes.error };
+  // despachado en vivo contra las SOs del programa (ordered - open por linea)
+  const enviadoVivo = {};
+  const abiertoVivo = {};
+  for (const l of soRes?.data ?? []) {
+    const hecho = (l.qty_ordered ?? 0) - (l.qty_open ?? 0);
+    enviadoVivo[l.sku] = (enviadoVivo[l.sku] ?? 0) + Math.max(0, hecho);
+    abiertoVivo[l.sku] = (abiertoVivo[l.sku] ?? 0) + (l.qty_open ?? 0);
+  }
+  return { stock, entrando, enviadoVivo, abiertoVivo, hayDatos: !snapRes.error };
 }
 
 // Etiqueta corta de entrega por PO: "Q4 2026" / "Q1 2027 (no antes de 11-01)"
@@ -47,6 +61,8 @@ export function Pepsi() {
   const { data, loading } = useQuery(fetchStockPepsi, []);
   const pos = PEPSI.purchase_orders;
   const device = PEPSI.items.find(i => i.category === 'device');
+  const deviceShipped = Math.max(device?.qty_shipped ?? 0,
+    data?.enviadoVivo?.[device?.sku] ?? 0);
   const totalPrograma = pos.reduce((s, p) => s + (p.total ?? 0), 0);
 
   // Por item: lo pedido vs lo que hay. "to ship" = pedido - despachado.
@@ -57,12 +73,14 @@ export function Pepsi() {
     const pdx = s?.on_hand_portland ?? null;
     const hk = s?.on_hand_hk ?? null;
     const incoming = inc?.qty ?? 0;
-    const porEnviar = item.qty_ordered_total - item.qty_shipped;
+    const vivo = data?.enviadoVivo?.[item.sku];
+    const qtyShipped = Math.max(item.qty_shipped, vivo ?? 0);
+    const porEnviar = item.qty_ordered_total - qtyShipped;
     // una PO marcada en riesgo (ej: chip EOL) no cuenta como entrante
     const incomingUtil = item.incoming_at_risk ? 0 : incoming;
     const disponible = (pdx ?? 0) + (hk ?? 0) + incomingUtil;
     const falta = s ? Math.max(0, porEnviar - disponible) : null;
-    return { ...item, pdx, hk, incoming, porEnviar, falta, posDetalle: inc?.pos ?? [] };
+    return { ...item, pdx, hk, incoming, porEnviar, falta, qtyShipped, posDetalle: inc?.pos ?? [] };
   });
   const itemsCortos = filas.filter(f => f.falta != null && f.falta > 0).length;
 
@@ -86,8 +104,8 @@ export function Pepsi() {
         <div className="grid grid-cols-3 gap-3">
           <KPICard
             label="Devices Shipped"
-            value={`${num(device?.qty_shipped)}/${num(device?.qty_required)}`}
-            sub={`${Math.round(((device?.qty_shipped ?? 0) / (device?.qty_required || 1)) * 100)}% of rollout`}
+            value={`${num(deviceShipped)}/${num(device?.qty_required)}`}
+            sub={`${Math.round((deviceShipped / (device?.qty_required || 1)) * 100)}% of rollout${SOS_PEPSI.length ? ' · live from ' + SOS_PEPSI.join(', ') : ''}`}
             accent
           />
           <KPICard
@@ -104,6 +122,11 @@ export function Pepsi() {
       )}
 
       <div className="space-y-1">
+        {PEPSI.service_order && (
+          <p className="text-[11px] font-mono text-success">
+            Service PO in NetSuite: {PEPSI.service_order.so_number} ({PEPSI.service_order.date}) — {formatCurrency(PEPSI.service_order.total)} · {PEPSI.service_order.detail}
+          </p>
+        )}
         {PEPSI.program_note && (
           <p className="text-[11px] font-mono text-warning">{PEPSI.program_note}</p>
         )}
@@ -112,6 +135,14 @@ export function Pepsi() {
             {p.po_number}: {p.note}
           </p>
         ))}
+        {PEPSI.po_email && (
+          <a
+            href={PEPSI.po_email} target="_blank" rel="noreferrer"
+            className="inline-block text-[11px] font-mono text-accent hover:underline"
+          >
+            Open the final PO PDFs (email, 9/3) ↗
+          </a>
+        )}
       </div>
 
       {/* La tabla que importa: pedido vs stock vs entrando */}
@@ -140,7 +171,7 @@ export function Pepsi() {
                 <p className="font-sans text-slate-300 text-xs mt-0.5">{f.name}</p>
                 <p className="font-mono text-muted text-[10px] mt-1">
                   Pepsi: {f.qty_ordered_total.toLocaleString()} ({pos.map(p => `${f.qty_by_po[p.po_number] ?? 0} ${p.tranche}`).join(' + ')})
-                  {f.qty_shipped > 0 && ` · shipped ${f.qty_shipped.toLocaleString()}`}
+                  {f.qtyShipped > 0 && ` · shipped ${f.qtyShipped.toLocaleString()}`}
                 </p>
                 {f.incoming_at_risk && f.incoming > 0 && (
                   <p className="font-mono text-warning text-[10px] mt-1">{f.incoming_risk_note}</p>
@@ -198,7 +229,7 @@ export function Pepsi() {
                         </div>
                       </td>
                       <td className="px-4 py-2.5 font-mono">
-                        {f.qty_shipped > 0 ? <span className="text-success">{f.qty_shipped.toLocaleString()}</span> : <span className="text-muted">—</span>}
+                        {f.qtyShipped > 0 ? <span className="text-success">{f.qtyShipped.toLocaleString()}</span> : <span className="text-muted">—</span>}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-white font-medium">{f.porEnviar.toLocaleString()}</td>
                       <td className="px-4 py-2.5 font-mono text-slate-300">{num(f.pdx)}</td>
