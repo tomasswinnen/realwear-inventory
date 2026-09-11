@@ -1,4 +1,4 @@
-// Programa PepsiCo — datos de la orden cargados a mano (2026-09-10).
+// Programa PepsiCo — datos de la orden cargados a mano (2026-09-11).
 // Fuente: POs FINALES de Peak Technologies (Interim Price Agreement,
 // "Peak / Pepsi Final Hardware POs" — versiones 9.2.26 F) + kit list PepsiCo.
 // qty_shipped se actualiza a mano hasta que el programa termine.
@@ -42,7 +42,7 @@ export const PEPSI = {
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 855, POINC110039090: 682 },
       qty_ordered_total: 1537, qty_shipped: 455, status: 'confirmed',
-      note: 'SO20159 fulfillment = 339 shipped 8/28 (IF20405) + ~116 earlier units invoiced on it. Outside these POs: 26 spare-pool units (SO20129: 1, SO20150: 25) + 17 on small Peak SOs Jul-Aug',
+      note: 'Shipment 1 (SO-PEPSICO-BO, 8/28, FedEx 876425239864 = IF20405 in NetSuite). Outside these POs: 26 spare-pool units (SO20129: 1, SO20150: 25)',
     },
     {
       sku: '127108', name: 'Battery Pack Navigator 500 Series',
@@ -50,8 +50,12 @@ export const PEPSI = {
       category: 'accessory', uom: 'EA', unit_price: 108.00, serialized: false,
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 855, POINC110039090: 682 },
-      qty_ordered_total: 1537, qty_shipped: 0, status: 'confirmed',
-      note: 'Final POs cover the full kit requirement (was 11 short on the draft PO)',
+      // Envio 2 del programa (SO-PEPSICO-BO1, 9/10, FedEx 383645658410):
+      // salio del deposito de Javelin pero AUN NO esta asentado en NetSuite,
+      // por eso va a mano. Cuando carguen el fulfillment en SO20159, el vivo
+      // (max con este numero) toma el control solo.
+      qty_ordered_total: 1537, qty_shipped: 455, status: 'confirmed',
+      note: 'Shipment 2 (SO-PEPSICO-BO1, 9/10, FedEx 383645658410) — shipped from Javelin, NOT entered in NetSuite yet',
     },
     {
       sku: '127149', name: '3M Headband Clips 2PC',
@@ -59,8 +63,8 @@ export const PEPSI = {
       category: 'accessory', uom: 'PAIR', unit_price: 14.00, serialized: false,
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 700, POINC110039090: 690 },
-      qty_ordered_total: 1390, qty_shipped: 0, status: 'confirmed',
-      note: "Kit list says '2 clips per kit'; assumes 1 pair per kit. If 2 pairs, requirement is 3074",
+      qty_ordered_total: 1390, qty_shipped: 455, status: 'confirmed',
+      note: "Shipment 2 (9/10, FedEx 383645658410) — not in NetSuite yet. Kit list says '2 clips per kit'; assumes 1 pair per kit",
     },
     {
       sku: '127105', name: '4x Multi Battery Charger',
@@ -68,8 +72,8 @@ export const PEPSI = {
       category: 'accessory', uom: 'EA', unit_price: 234.00, serialized: false,
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: { POINC110038312: 180, POINC110039090: 180 },
-      qty_ordered_total: 360, qty_shipped: 0, status: 'confirmed',
-      note: '63 units short of kit requirement. Q4 tranche (180): 156 ready from stock, 24 backordered against the at-risk PO (per 9/7 backorder report)',
+      qty_ordered_total: 360, qty_shipped: 150, status: 'confirmed',
+      note: '63 units short of kit requirement. Shipment 2 (9/10) took 150 of the Q4 180; the rest is backordered against the at-risk PO',
       // La PO de reposicion abierta esta en riesgo: el chip del cargador es
       // EOL. No se cuenta como stock entrante en el calculo de cobertura.
       incoming_at_risk: true,
@@ -81,8 +85,8 @@ export const PEPSI = {
       category: 'accessory', uom: 'EA', unit_price: 63.00, serialized: false,
       qty_per_kit: null, qty_required: null,
       qty_by_po: { POINC110038312: 855, POINC110039090: 690 },
-      qty_ordered_total: 1545, qty_shipped: 0, status: 'confirmed',
-      note: 'Price corrected to $63.00 on the final POs. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2',
+      qty_ordered_total: 1545, qty_shipped: 455, status: 'confirmed',
+      note: 'Shipment 2 (9/10, FedEx 383645658410) — not in NetSuite yet. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2',
     },
     {
       sku: '127129', name: '65W USB-C Charger',

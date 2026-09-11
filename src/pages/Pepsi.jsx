@@ -47,28 +47,7 @@ async function fetchStockPepsi() {
     enviadoVivo[l.sku] = (enviadoVivo[l.sku] ?? 0) + Math.max(0, hecho);
     abiertoVivo[l.sku] = (abiertoVivo[l.sku] ?? 0) + (l.qty_open ?? 0);
   }
-  // Envios a Peak ANTERIORES a las POs del programa: SOs ya facturadas
-  // (SO19262 nov-2025, spares, etc). No cuentan contra las POs nuevas en
-  // NetSuite, pero se muestran para que "Shipped" no parezca incompleto.
-  const enviadoAntes = {};
-  try {
-    const hist = await supabase.from('so_history')
-      .select('so_number, status, customer')
-      .ilike('customer', '%peak%');
-    const cerradas = (hist.data ?? [])
-      .filter(r => r.status === 'Billed' && !SOS_PEPSI.includes(r.so_number))
-      .map(r => r.so_number);
-    if (cerradas.length) {
-      const lin = await supabase.from('so_lines')
-        .select('so_number, sku, qty')
-        .in('so_number', cerradas)
-        .in('sku', SKUS_PEPSI);
-      for (const l of lin.data ?? []) {
-        enviadoAntes[l.sku] = (enviadoAntes[l.sku] ?? 0) + (Number(l.qty) || 0);
-      }
-    }
-  } catch { /* sin so_history/so_lines, la pagina sigue andando sin esta linea */ }
-  return { stock, entrando, enviadoVivo, abiertoVivo, enviadoAntes, hayDatos: !snapRes.error };
+  return { stock, entrando, enviadoVivo, abiertoVivo, hayDatos: !snapRes.error };
 }
 
 // Etiqueta corta de entrega por PO: "Q4 2026" / "Q1 2027 (no antes de 11-01)"
@@ -101,8 +80,7 @@ export function Pepsi() {
     const incomingUtil = item.incoming_at_risk ? 0 : incoming;
     const disponible = (pdx ?? 0) + (hk ?? 0) + incomingUtil;
     const falta = s ? Math.max(0, porEnviar - disponible) : null;
-    const antes = data?.enviadoAntes?.[item.sku] ?? 0;
-    return { ...item, pdx, hk, incoming, porEnviar, falta, qtyShipped, antes, posDetalle: inc?.pos ?? [] };
+    return { ...item, pdx, hk, incoming, porEnviar, falta, qtyShipped, posDetalle: inc?.pos ?? [] };
   });
   const itemsCortos = filas.filter(f => f.falta != null && f.falta > 0).length;
 
@@ -194,7 +172,6 @@ export function Pepsi() {
                 <p className="font-mono text-muted text-[10px] mt-1">
                   Pepsi: {f.qty_ordered_total.toLocaleString()} ({pos.map(p => `${f.qty_by_po[p.po_number] ?? 0} ${p.tranche}`).join(' + ')})
                   {f.qtyShipped > 0 && ` · shipped ${f.qtyShipped.toLocaleString()}`}
-                  {f.antes > 0 && ` · +${f.antes.toLocaleString()} earlier`}
                 </p>
                 {f.incoming_at_risk && f.incoming > 0 && (
                   <p className="font-mono text-warning text-[10px] mt-1">{f.incoming_risk_note}</p>
@@ -253,11 +230,6 @@ export function Pepsi() {
                       </td>
                       <td className="px-4 py-2.5 font-mono">
                         {f.qtyShipped > 0 ? <span className="text-success">{f.qtyShipped.toLocaleString()}</span> : <span className="text-muted">—</span>}
-                        {f.antes > 0 && (
-                          <p className="text-[10px] text-muted whitespace-nowrap mt-0.5">
-                            +{f.antes.toLocaleString()} earlier Peak orders
-                          </p>
-                        )}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-white font-medium">{f.porEnviar.toLocaleString()}</td>
                       <td className="px-4 py-2.5 font-mono text-slate-300">{num(f.pdx)}</td>
@@ -302,10 +274,9 @@ export function Pepsi() {
             <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
               "Enough?" compares what's left to ship against PDX + HK stock plus open incoming POs
               (stock is shared with other customers — it's a ceiling, not a reservation).
-              "Shipped" counts the program POs (SO20159, live); "+N earlier Peak orders" are units
-              already billed to Peak on orders BEFORE these POs (2025 kit order, spares) — NetSuite
-              does not credit them against the new POs. Pepsi order data is manual; the rest refreshes
-              with the pipeline.
+              "Shipped" counts the program POs only (SO20159 live from NetSuite, or the manual
+              number when a warehouse shipment hasn't been entered in NetSuite yet). Pepsi order
+              data is manual; the rest refreshes with the pipeline.
             </p>
           </div>
           </>
