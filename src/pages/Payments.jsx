@@ -10,9 +10,21 @@ import { formatCurrency } from '../utils/coverage';
 // Fuente: freight_invoices (el mail de Tomas → Facturas.csv → pipeline).
 
 async function fetchInvoices() {
-  const res = await supabase.from('freight_invoices').select('*')
-    .order('invoice_date', { ascending: false });
-  return { invoices: res.data ?? [], error: res.error };
+  const [res, sc] = await Promise.all([
+    supabase.from('freight_invoices').select('*')
+      .order('invoice_date', { ascending: false }),
+    // Envíos individuales de cada factura (tracking → SO/TO → costo).
+    // Los carga el pipeline desde ShippingCosts.xls; se unen acá por número
+    // de factura para que cada invoice muestre QUÉ envíos la componen.
+    supabase.from('shipping_costs').select('tracking,carrier,invoice_number,cost,so_number'),
+  ]);
+  return { invoices: res.data ?? [], envios: sc.data ?? [], error: res.error };
+}
+
+// "DB3 7662903 00" y "DB3 7662903 00A" son la misma factura base: Tipalti a
+// veces la parte en 00 (depósito) y 00A (flete). Se unen por el número base.
+function invoiceBase(n) {
+  return (n ?? '').replace(/\s*\(.*\)\s*$/, '').replace(/\s00A?$/, '').trim();
 }
 
 const MESES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -73,6 +85,25 @@ export function Payments() {
   const [vendorSel, setVendorSel] = useState('All');
 
   const todos = data?.invoices ?? [];
+
+  // Envíos por factura (base): la misma factura puede aparecer como "X 00" y
+  // "X 00A" — los envíos cargados bajo cualquiera de las dos se muestran en ambas.
+  const enviosPorFactura = useMemo(() => {
+    const m = new Map();
+    for (const e of (data?.envios ?? [])) {
+      const k = invoiceBase(e.invoice_number);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(e);
+    }
+    for (const lista of m.values()) {
+      lista.sort((a, b) => (Number(b.cost) || 0) - (Number(a.cost) || 0));
+    }
+    return m;
+  }, [data]);
+
+  const enviosDe = (inv) => enviosPorFactura.get(invoiceBase(inv.invoice_number)) ?? [];
+  // Un tracking real es numérico; las filas de margen/UPS/depósito llevan etiqueta.
+  const esTracking = (t) => /^\d[\d\s]*$/.test(t ?? '');
   const vendors = useMemo(() => {
     const tot = new Map();
     for (const inv of todos) tot.set(inv.vendor, (tot.get(inv.vendor) ?? 0) + (Number(inv.amount) || 0));
@@ -333,6 +364,22 @@ export function Payments() {
                         </div>
                       ))}
                     </div>
+                    {enviosDe(inv).length > 0 && (
+                      <div className="mt-2 space-y-0.5 border-t border-white/[0.06] pt-2">
+                        <div className="text-[9px] uppercase tracking-wider text-muted/70 font-sans">
+                          {enviosDe(inv).filter(e => esTracking(e.tracking)).length} shipments
+                        </div>
+                        {enviosDe(inv).map((e, i) => (
+                          <div key={i} className="flex items-baseline justify-between gap-2 font-mono text-[10px]">
+                            <span className="truncate">
+                              <span className={esTracking(e.tracking) ? 'text-slate-400' : 'text-muted italic'}>{e.tracking}</span>
+                              {e.so_number && <span className="text-accent"> · {e.so_number}</span>}
+                            </span>
+                            <span className="text-slate-300 whitespace-nowrap">${fmt(Number(e.cost))}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -371,6 +418,20 @@ export function Payments() {
                                 <span className="text-slate-300"> — ${fmt(l.monto)}</span>
                               </div>
                             ))}
+                            {enviosDe(inv).length > 0 && (
+                              <div className="mt-1.5 pt-1.5 border-t border-white/[0.06]">
+                                <div className="text-[9px] uppercase tracking-wider text-muted/70 font-sans mb-0.5">
+                                  {enviosDe(inv).filter(e => esTracking(e.tracking)).length} shipments on this invoice
+                                </div>
+                                {enviosDe(inv).map((e, i) => (
+                                  <div key={i} className="whitespace-nowrap text-[10px]">
+                                    <span className={esTracking(e.tracking) ? 'text-slate-400' : 'text-muted italic'}>{e.tracking}</span>
+                                    {e.so_number && <span className="text-accent"> · {e.so_number}</span>}
+                                    <span className="text-slate-300"> — ${fmt(Number(e.cost))}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
