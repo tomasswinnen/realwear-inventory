@@ -8,7 +8,7 @@ import { TableSkeleton } from '../components/Skeleton';
 import { calcMonthsCoverage, formatCurrency, isValidSku } from '../utils/coverage';
 
 async function fetchReorderData() {
-  const [skusRes, snapshotRes, forecastRes, tosRes, posRes] = await Promise.all([
+  const [skusRes, snapshotRes, forecastRes, tosRes, posRes, backlogRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('*')),
     excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
@@ -17,6 +17,10 @@ async function fetchReorderData() {
     excludeSkus(supabase.from('open_transfer_orders')
       .select('sku, transfer_order_number, qty_open, destination_location, status')),
     excludeSkus(supabase.from('open_pos').select('sku, po_number, qty_open, status')),
+    // Unidades en sales orders ABIERTAS: siguen On Hand pero ya tienen dueño.
+    // Sin esto, un pedido grande deja el stock "bien" hasta que se despacha y
+    // recien ahi salta la alerta — dias perdidos (pedido de Tomas, 25/09/2026).
+    excludeSkus(supabase.from('sales_backlog').select('sku, qty_open').gt('qty_open', 0)),
   ]);
   for (const r of [skusRes, snapshotRes, forecastRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -25,6 +29,7 @@ async function fetchReorderData() {
     skus: skusRes.data, snapshot: snapshotRes.data, forecast: forecastRes.data,
     openTos: tosRes.error ? [] : tosRes.data ?? [],
     openPos: posRes.error ? [] : posRes.data ?? [],
+    backlog: backlogRes.error ? [] : backlogRes.data ?? [],
   };
 }
 
@@ -77,6 +82,10 @@ export function ReorderAlerts() {
       if (!latestSnap[s.sku]) latestSnap[s.sku] = s;
     }
     const demandMap = Object.fromEntries(data.forecast.map(f => [f.sku, f]));
+    const committedMap = {};
+    for (const b of (data.backlog ?? [])) {
+      committedMap[b.sku] = (committedMap[b.sku] ?? 0) + (b.qty_open ?? 0);
+    }
 
     const reorderRows = [];
     const transferRows = [];
@@ -97,10 +106,20 @@ export function ReorderAlerts() {
         const months = calcMonthsCoverage(onHand, avg6);
         const monthsPdx = calcMonthsCoverage(portland, avg6);
         const monthsHk = calcMonthsCoverage(hk, avg6);
+        const committed = committedMap[sku.sku] ?? 0;
+        const available = onHand - committed;
+        const monthsAvail = calcMonthsCoverage(Math.max(0, available), avg6);
 
         if (isFinite(months) && months < 3) {
           const suggested = calcSuggestedQty(sku, avg6);
-          reorderRows.push({ ...sku, onHand, onOrder, portland, hk, avg6, last3, months, monthsPdx, monthsHk, suggested });
+          reorderRows.push({ ...sku, onHand, onOrder, portland, hk, avg6, last3, months, monthsPdx, monthsHk, suggested, committed, available, monthsAvail, squeeze: false });
+        } else if (committed > 0 && isFinite(monthsAvail) && monthsAvail < 3) {
+          // El total se ve sano, pero gran parte ya esta COMPROMETIDA en
+          // ordenes abiertas: cuando se despachen, el stock cae de golpe.
+          // Alerta temprana con etiqueta propia para distinguir "esta pedido"
+          // de "no esta en el warehouse".
+          const suggested = calcSuggestedQty(sku, avg6);
+          reorderRows.push({ ...sku, onHand, onOrder, portland, hk, avg6, last3, months, monthsPdx, monthsHk, suggested, committed, available, monthsAvail, squeeze: true });
         } else if (avg6 > 0) {
           // Total stock is OK — check if one warehouse is critically low while the other has plenty
           const pdxLow = isFinite(monthsPdx) && monthsPdx < 2;
@@ -126,7 +145,7 @@ export function ReorderAlerts() {
     const q = search.toLowerCase();
     const filt = r => !search || r.sku.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q);
     return {
-      reorderRows: reorderRows.sort((a, b) => a.months - b.months).filter(filt),
+      reorderRows: reorderRows.sort((a, b) => (a.monthsAvail ?? a.months) - (b.monthsAvail ?? b.months)).filter(filt),
       transferRows: transferRows.sort((a, b) => a.monthsPdx - a.monthsHk > 0 ? 1 : -1).filter(filt),
     };
   }, [data, search]);
@@ -144,7 +163,7 @@ export function ReorderAlerts() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-sans font-semibold text-white">Reorder Alerts</h1>
-          <p className="text-xs text-muted font-mono mt-0.5">SKUs with &lt; 3 months total coverage, or imbalanced between warehouses</p>
+          <p className="text-xs text-muted font-mono mt-0.5">SKUs with &lt; 3 months coverage (counting stock reserved by open SOs), or imbalanced between warehouses</p>
         </div>
         <input
           type="search"
@@ -172,19 +191,28 @@ export function ReorderAlerts() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'On Hand', 'On Order', 'Avg/Mo', 'Last 3 Mo', 'Coverage', 'PDX', 'HK', 'Supplier', 'Lead', 'Suggested Qty', 'Action'].map(h => (
+                    {['SKU', 'Description', 'On Hand', 'Committed', 'Available', 'On Order', 'Avg/Mo', 'Last 3 Mo', 'Coverage', 'PDX', 'HK', 'Supplier', 'Lead', 'Suggested Qty', 'Action'].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {reorderRows.length === 0 ? (
-                    <tr><td colSpan={13} className="px-4 py-10 text-center text-muted font-mono">No SKUs need reordering right now</td></tr>
+                    <tr><td colSpan={15} className="px-4 py-10 text-center text-muted font-mono">No SKUs need reordering right now</td></tr>
                   ) : reorderRows.map(row => (
                     <tr key={row.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                       <td className="px-3 py-2.5"><Link to={`/item/${row.sku}`} className="font-mono text-accent hover:text-accent/80">{row.sku}</Link></td>
-                      <td className="px-3 py-2.5 text-slate-300 font-sans max-w-[120px] truncate" title={row.description}>{row.description}</td>
+                      <td className="px-3 py-2.5 text-slate-300 font-sans max-w-[120px] truncate" title={row.description}>
+                        {row.description}
+                        {row.squeeze && (
+                          <span className="ml-1.5 text-[9px] font-mono px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 whitespace-nowrap align-middle">
+                            reserved by open SOs
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 font-mono text-white">{row.onHand.toLocaleString()}</td>
+                      <td className={`px-3 py-2.5 font-mono ${row.committed > 0 ? 'text-warning' : 'text-muted'}`}>{(row.committed ?? 0).toLocaleString()}</td>
+                      <td className="px-3 py-2.5"><span className="font-mono text-white">{(row.available ?? row.onHand).toLocaleString()}</span>{isFinite(row.monthsAvail) && <span className="ml-1 text-[10px] font-mono text-muted">{row.monthsAvail.toFixed(1)}mo</span>}</td>
                       <td className="px-3 py-2.5 font-mono text-muted">{row.onOrder.toLocaleString()}</td>
                       <td className="px-3 py-2.5 font-mono text-white">{row.avg6.toFixed(0)}</td>
                       <td className="px-3 py-2.5 font-mono text-slate-300">{row.last3.toLocaleString()}</td>

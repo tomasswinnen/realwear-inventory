@@ -1,4 +1,4 @@
-// Programa PepsiCo — datos de la orden cargados a mano (2026-09-11).
+// Programa PepsiCo — datos de la orden cargados a mano (act. 2026-09-22).
 // Fuente: POs FINALES de Peak Technologies (Interim Price Agreement,
 // "Peak / Pepsi Final Hardware POs" — versiones 9.2.26 F) + kit list PepsiCo.
 // qty_shipped se actualiza a mano hasta que el programa termine.
@@ -8,15 +8,18 @@ export const PEPSI = {
   program: 'WES Navigator 520 deployment',
   total_kits: 1537,
   currency: 'USD',
-  // Estado 9/16: los 3 envios del programa ya salieron de Javelin; el 1 y el 2
-  // estan asentados en NetSuite (IF20405, IF20449), el 3 (BO2, 9/15) todavia no.
+  // Estado 9/22: los 3 envios estan asentados en NetSuite (IF20405, IF20449,
+  // IF20456/57/60) y SO20159 esta FACTURADA (Billed, $1,837,331). Al salir del
+  // backlog abierto, el 'vivo' de la pagina da 0: mandan los qty_shipped
+  // manuales de este archivo (855/855/700/180/855), que coinciden con lo
+  // despachado. SO20195 quedo partida por tramo: 855 fulfilled + 682 open.
   // Estado 9/10: llego la Service PO de Peak -> SO20195 en NetSuite (9/2),
   // servicios para los 1,537 kits incl. ARIOS Cloud Ultra; fulfilled 9/10,
   // pending billing. La PO Q1 de hardware sigue sin cargarse en NetSuite.
   program_note: 'Q1 2027 hardware PO not entered in NetSuite yet',
   service_order: {
     so_number: 'SO20195', date: '2026-09-02', total: 977716.44,
-    detail: 'Warranty $385,940.70 · Support $195,045.30 · RMA pool $66,398.40 · ARIOS Cloud Ultra $330,332.04 — for all 1,537 kits · fulfilled 9/10, pending billing',
+    detail: 'Warranty $385,940.70 · Support $195,045.30 · RMA pool $66,398.40 · ARIOS Cloud Ultra $330,332.04 — for all 1,537 kits · Q4 tranche (855) fulfilled 9/10 · Q1 tranche (682) still open in NetSuite',
   },
   // Mail de Timon (9/3) con los PDFs de las dos POs finales de hardware
   po_email: 'https://outlook.office365.com/owa/?ItemID=AAMkADEwZGQxZDU1LWY3YzUtNGZlZC1hZmE2LTg2MGRjYWU1OWRiNwBGAAAAAAATk%2F8Xj0YLTIdroYUHAFJ2BwAzCI4YJJD%2BTKdnqF547uDVAAAAAAEMAAAzCI4YJJD%2BTKdnqF547uDVAAGq%2BXqAAAA%3D&exvsurl=1&viewmodel=ReadMessageItem',
@@ -26,13 +29,13 @@ export const PEPSI = {
       total: 1837331.00,
       // SO en NetSuite: con esto la pagina saca shipped/open en vivo del backlog
       so_number: 'SO20159',
-      note: 'Final PO (9/2/26, incl. $171,000 expedite fee) — in NetSuite as SO20159 (8/28), partially fulfilled',
+      note: 'Final PO (9/2/26, incl. $171,000 expedite fee) — in NetSuite as SO20159 (8/28): fully shipped in 3 shipments and BILLED ($1.84M, 9/16)',
     },
     {
       po_number: 'POINC110039090', date: '2026-08-11', kits: 682, tranche: 'Q1 2027',
       total: 1340036.40,
       ship_not_before: '2026-11-01',
-      note: 'Final PO (9/2/26) — do not ship until after 11/1/2026 · not entered in NetSuite yet',
+      note: 'Final PO (9/2/26) — PO says do not ship until after 11/1/2026, but internal planning (9/22) wants the package to ARRIVE at Peak before Nov 1: confirm timing · not entered in NetSuite yet',
     },
   ],
   items: [
@@ -44,7 +47,7 @@ export const PEPSI = {
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 855, POINC110039090: 682 },
       qty_ordered_total: 1537, qty_shipped: 855, status: 'confirmed',
-      note: 'Shipment 1 (SO-PEPSICO-BO, 8/28, FedEx 876425239864 = IF20405): 455 · Shipment 3 (SO-PEPSICO-BO2, 9/15, FedEx 383718639399): 400 — shipment 3 NOT entered in NetSuite yet. Q4 PO fully shipped. Outside these POs: 26 spare-pool units (SO20129: 1, SO20150: 25)',
+      note: 'Shipment 1 (SO-PEPSICO-BO, 8/28, FedEx 876425239864 = IF20405): 455 · Shipment 3 (SO-PEPSICO-BO2, 9/15, FedEx 383718639399 = IF20456/60): 400 — Q4 PO fully shipped & billed. Outside these POs: 26 spare-pool units (SO20129: 1, SO20150: 25)',
     },
     {
       sku: '127108', name: 'Battery Pack Navigator 500 Series',
@@ -52,11 +55,11 @@ export const PEPSI = {
       category: 'accessory', uom: 'EA', unit_price: 108.00, serialized: false,
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 855, POINC110039090: 682 },
-      // Envio 2 (BO1, 9/10) ya esta asentado (IF20449). El envio 3 (BO2, 9/15)
-      // todavia no: por eso qty_shipped va a mano. Cuando carguen el fulfillment
-      // en SO20159, el vivo (max con este numero) toma el control solo.
+      // Los 3 envios estan asentados y SO20159 facturada: la orden salio del
+      // backlog abierto, asi que el 'vivo' (qty_ordered - qty_open) da 0 y
+      // mandan estos numeros manuales, que son los despachados finales.
       qty_ordered_total: 1537, qty_shipped: 855, status: 'confirmed',
-      note: 'Shipment 2 (SO-PEPSICO-BO1, 9/10, FedEx 383645658410 = IF20449): 455 · Shipment 3 (SO-PEPSICO-BO2, 9/15, FedEx 383718639399): 400 — shipment 3 NOT entered in NetSuite yet. Q4 PO fully shipped',
+      note: 'Shipment 2 (SO-PEPSICO-BO1, 9/10, FedEx 383645658410 = IF20449): 455 · Shipment 3 (SO-PEPSICO-BO2, 9/15, FedEx 383718639399 = IF20456/60): 400 — Q4 PO fully shipped & billed',
     },
     {
       sku: '127149', name: '3M Headband Clips 2PC',
@@ -65,7 +68,7 @@ export const PEPSI = {
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 700, POINC110039090: 690 },
       qty_ordered_total: 1390, qty_shipped: 700, status: 'confirmed',
-      note: "Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15, FedEx 383718639399): 245 — shipment 3 not in NetSuite yet. Q4 allocation (700) fully shipped. Kit list says '2 clips per kit'; assumes 1 pair per kit",
+      note: "Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15 = IF20456/60): 245 — Q4 allocation (700) fully shipped & billed. Kit list says '2 clips per kit'; assumes 1 pair per kit",
     },
     {
       sku: '127105', name: '4x Multi Battery Charger',
@@ -74,11 +77,11 @@ export const PEPSI = {
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: { POINC110038312: 180, POINC110039090: 180 },
       qty_ordered_total: 360, qty_shipped: 180, status: 'confirmed',
-      note: '63 units short of kit requirement. Shipment 2 (9/10 = IF20449): 150 · Shipment 3 (9/15): 30 — Q4 allocation (180) fully shipped; shipment 3 not in NetSuite yet',
+      note: '63 units short of kit requirement. Shipment 2 (9/10 = IF20449): 150 · Shipment 3 (9/15 = IF20456/60): 30 — Q4 allocation (180) fully shipped & billed. Stock left: 1 unit',
       // La PO de reposicion abierta esta en riesgo: el chip del cargador es
       // EOL. No se cuenta como stock entrante en el calculo de cobertura.
       incoming_at_risk: true,
-      incoming_risk_note: 'Incoming PO at risk — charger chip is EOL, may not arrive',
+      incoming_risk_note: 'Incoming PO2407 (2,000 u, Sunrise Simcom, ordered 12/2025, still pending receipt) at risk — charger chip is EOL',
     },
     {
       sku: '127125', name: 'Workband 2',
@@ -87,7 +90,7 @@ export const PEPSI = {
       qty_per_kit: null, qty_required: null,
       qty_by_po: { POINC110038312: 855, POINC110039090: 690 },
       qty_ordered_total: 1545, qty_shipped: 855, status: 'confirmed',
-      note: 'Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15, FedEx 383718639399): 400 — shipment 3 not in NetSuite yet. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2',
+      note: 'Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15 = IF20456/60): 400 — fully shipped & billed. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2',
     },
     {
       sku: '127129', name: '65W USB-C Charger',
@@ -96,7 +99,7 @@ export const PEPSI = {
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: {},
       qty_ordered_total: 0, qty_shipped: 0, status: 'required_not_ordered',
-      note: 'Not on the Peak POs — Peak will issue a separate PO for the power supplies. RealWear stock arriving via PO2452 (Shanghai Sunrise Simcom): 364 of 2,000 received 9/14, 1,636 open',
+      note: 'Not on the Peak POs — Peak will issue a separate PO for the power supplies. RealWear stock arriving via PO2452 (Shanghai Sunrise Simcom): 520 of 2,000 received, 1,480 open',
     },
   ],
 };

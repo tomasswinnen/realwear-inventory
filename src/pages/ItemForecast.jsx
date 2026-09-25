@@ -273,7 +273,7 @@ async function fetchAllSkus() {
 }
 
 async function fetchItem(sku) {
-  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes, marginRes, leadRes, onHandHistRes] = await Promise.all([
+  const [skuRes, snapRes, salesRes, valRes, noteRes, posRes, fcRes, openPosRes, openTransferRes, distStockRes, marginRes, leadRes, onHandHistRes, openSosRes] = await Promise.all([
     supabase.from('skus').select('*').eq('sku', sku).maybeSingle(),
     supabase.from('inventory_snapshot').select('*').eq('sku', sku)
       .order('updated_at', { ascending: false }).limit(1),
@@ -306,6 +306,12 @@ async function fetchItem(sku) {
     // todavia no tiene snapshots, la tarjeta muestra su estado vacio.
     supabase.from('inventory_history').select('*')
       .eq('sku', sku).order('fecha', { ascending: true }).limit(800),
+    // Sales orders ABIERTAS con unidades sin despachar de este SKU: el stock
+    // sigue On Hand hasta el fulfillment, pero ya tiene dueño. Sin esto se
+    // pierden dias sin notar que falta stock (pedido de Tomas, 25/09/2026).
+    supabase.from('sales_backlog')
+      .select('so_number, customer, status, qty_open')
+      .eq('sku', sku).gt('qty_open', 0),
   ]);
   console.log('open_transfer_orders for SKU', sku, ':', openTransferRes.data, openTransferRes.error);
 
@@ -326,6 +332,7 @@ async function fetchItem(sku) {
     margin: marginRes?.data ?? null,
     leadTimes: leadRes?.data ?? [],
     onHandHist: onHandHistRes?.error ? [] : onHandHistRes?.data ?? [],
+    openSos: openSosRes?.error ? [] : openSosRes?.data ?? [],
   };
 }
 
@@ -480,12 +487,45 @@ export function ItemForecast() {
   const leadMediana = leadDias.length ? leadDias[Math.floor(leadDias.length / 2)] : null;
   const distStockTotal = distStock.reduce((s, r) => s + (r.qty_on_hand ?? 0), 0);
 
+  // Comprometido: unidades en sales orders ABIERTAS (qty_open del backlog).
+  // Siguen contando como On Hand hasta que se despachan, pero no son tuyas.
+  // Available = On Hand - Committed es lo unico realmente disponible.
+  const openSos = data?.openSos ?? [];
+  const committed = openSos.reduce((s, r) => s + (r.qty_open ?? 0), 0);
+  const available = onHand - committed;
+  const a6c = computed?.a6 ?? 0;
+  const coverageAvailable = a6c > 0 ? available / a6c : Infinity;
+  const sosResumen = openSos
+    .slice()
+    .sort((a, b) => (b.qty_open ?? 0) - (a.qty_open ?? 0))
+    .slice(0, 2)
+    .map(o => `${o.so_number} (${o.qty_open})`)
+    .join(' · ');
+
   // KPI card definitions
   const kpis = [
     {
       label: 'On Hand',
       value: sku && !loading ? onHand.toLocaleString() : null,
       valueClass: 'text-accent',
+    },
+    {
+      label: 'Committed (open SOs)',
+      value: sku && !loading ? committed.toLocaleString() : null,
+      valueClass: committed > 0 ? 'text-warning' : 'text-muted',
+      sub: sku && !loading
+        ? (committed > 0
+            ? `${openSos.length} open order${openSos.length > 1 ? 's' : ''}${sosResumen ? ': ' + sosResumen : ''}`
+            : 'nothing reserved')
+        : null,
+    },
+    {
+      label: 'Available now',
+      value: sku && !loading ? available.toLocaleString() : null,
+      valueClass: computed ? itemCoverageClass(coverageAvailable) : 'text-white',
+      sub: computed
+        ? `on hand − committed · ${isFinite(coverageAvailable) ? coverageAvailable.toFixed(1) + ' mo' : '∞'}`
+        : 'on hand − committed',
     },
     {
       label: 'Portland (PDX)',
