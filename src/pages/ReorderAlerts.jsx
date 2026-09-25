@@ -104,24 +104,25 @@ export function ReorderAlerts() {
         const portland = snap.on_hand_portland ?? 0;
         const hk = snap.on_hand_hk ?? 0;
         const months = calcMonthsCoverage(onHand, avg6);
-        const monthsPdx = calcMonthsCoverage(portland, avg6);
-        const monthsHk = calcMonthsCoverage(hk, avg6);
         // Committed de NetSuite por ubicacion si el pipeline ya lo sube;
-        // si no, el total de qty_open del backlog.
+        // si no, el total de qty_open del backlog (sin desglose por deposito).
         const committed = snap.committed_total ?? committedMap[sku.sku] ?? 0;
         const available = onHand - committed;
+        // Disponible POR DEPOSITO cuando hay committed por ubicacion.
+        const availPdx = snap.committed_portland != null ? portland - snap.committed_portland : portland;
+        const availHk = snap.committed_hk != null ? hk - snap.committed_hk : hk;
+        // La alerta se calcula sobre lo DISPONIBLE (on hand - comprometido):
+        // el stock reservado por SOs abiertas no te salva un faltante.
         const monthsAvail = calcMonthsCoverage(Math.max(0, available), avg6);
+        const monthsPdx = calcMonthsCoverage(Math.max(0, availPdx), avg6);
+        const monthsHk = calcMonthsCoverage(Math.max(0, availHk), avg6);
 
-        if (isFinite(months) && months < 3) {
+        if (isFinite(monthsAvail) && monthsAvail < 3) {
           const suggested = calcSuggestedQty(sku, avg6);
-          reorderRows.push({ ...sku, onHand, onOrder, portland, hk, avg6, last3, months, monthsPdx, monthsHk, suggested, committed, available, monthsAvail, squeeze: false });
-        } else if (committed > 0 && isFinite(monthsAvail) && monthsAvail < 3) {
-          // El total se ve sano, pero gran parte ya esta COMPROMETIDA en
-          // ordenes abiertas: cuando se despachen, el stock cae de golpe.
-          // Alerta temprana con etiqueta propia para distinguir "esta pedido"
-          // de "no esta en el warehouse".
-          const suggested = calcSuggestedQty(sku, avg6);
-          reorderRows.push({ ...sku, onHand, onOrder, portland, hk, avg6, last3, months, monthsPdx, monthsHk, suggested, committed, available, monthsAvail, squeeze: true });
+          // squeeze: el total on-hand se veia sano; lo que lo hunde es lo
+          // comprometido. Etiqueta "reserved by open SOs" para distinguirlo.
+          const squeeze = !(isFinite(months) && months < 3);
+          reorderRows.push({ ...sku, onHand, onOrder, portland, hk, avg6, last3, months, monthsPdx, monthsHk, suggested, committed, available, availPdx, availHk, monthsAvail, squeeze });
         } else if (avg6 > 0) {
           // Total stock is OK — check if one warehouse is critically low while the other has plenty
           const pdxLow = isFinite(monthsPdx) && monthsPdx < 2;
@@ -131,7 +132,7 @@ export function ReorderAlerts() {
           if (avg6 >= 1 && ((pdxLow && hkOk) || (hkLow && pdxOk))) {
             const from = pdxLow ? 'HK → PDX' : 'PDX → HK';
             const lowWh = pdxLow ? 'Portland' : 'Hong Kong';
-            const qty = Math.ceil(avg6 * 3) - (pdxLow ? portland : hk);
+            const qty = Math.ceil(avg6 * 3) - (pdxLow ? availPdx : availHk);
             // ¿Ya hay algo en movimiento para este SKU?
             const tosSku = (data.openTos ?? []).filter(t => t.sku === sku.sku && (t.qty_open ?? 0) > 0);
             const posSku = (data.openPos ?? []).filter(p => p.sku === sku.sku && (p.qty_open ?? 0) > 0);
@@ -165,7 +166,7 @@ export function ReorderAlerts() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-sans font-semibold text-white">Reorder Alerts</h1>
-          <p className="text-xs text-muted font-mono mt-0.5">SKUs with &lt; 3 months coverage (counting stock reserved by open SOs), or imbalanced between warehouses</p>
+          <p className="text-xs text-muted font-mono mt-0.5">SKUs with &lt; 3 months of AVAILABLE stock (on hand − committed to open SOs), or imbalanced between warehouses</p>
         </div>
         <input
           type="search"
@@ -178,8 +179,8 @@ export function ReorderAlerts() {
 
       {!loading && (
         <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-xs font-mono">
-          <span className="text-danger">{reorderRows.filter(r => r.months < 1).length} urgent (&lt;1mo)</span>
-          <span className="text-warning">{reorderRows.filter(r => r.months >= 1 && r.months < 3).length} watch (1–3mo)</span>
+          <span className="text-danger">{reorderRows.filter(r => r.monthsAvail < 1).length} urgent (&lt;1mo available)</span>
+          <span className="text-warning">{reorderRows.filter(r => r.monthsAvail >= 1 && r.monthsAvail < 3).length} watch (1–3mo available)</span>
           <span className="text-muted">{reorderRows.length} reorders · {transferRows.length} transfers</span>
         </div>
       )}
@@ -193,7 +194,7 @@ export function ReorderAlerts() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'On Hand', 'Committed', 'Available', 'On Order', 'Avg/Mo', 'Last 3 Mo', 'Coverage', 'PDX', 'HK', 'Supplier', 'Lead', 'Suggested Qty', 'Action'].map(h => (
+                    {['SKU', 'Description', 'On Hand', 'Committed', 'Available', 'On Order', 'Avg/Mo', 'Last 3 Mo', 'Coverage (avail)', 'PDX avail', 'HK avail', 'Supplier', 'Lead', 'Suggested Qty', 'Action'].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -218,9 +219,14 @@ export function ReorderAlerts() {
                       <td className="px-3 py-2.5 font-mono text-muted">{row.onOrder.toLocaleString()}</td>
                       <td className="px-3 py-2.5 font-mono text-white">{row.avg6.toFixed(0)}</td>
                       <td className="px-3 py-2.5 font-mono text-slate-300">{row.last3.toLocaleString()}</td>
-                      <td className="px-3 py-2.5"><CoverageCell months={row.months} /></td>
-                      <td className="px-3 py-2.5"><CoverageCell months={row.monthsPdx} /></td>
-                      <td className="px-3 py-2.5"><CoverageCell months={row.monthsHk} /></td>
+                      <td className="px-3 py-2.5">
+                        <CoverageCell months={row.monthsAvail} />
+                        {isFinite(row.months) && row.months.toFixed(1) !== row.monthsAvail.toFixed(1) && (
+                          <span className="ml-1 text-[9px] font-mono text-muted whitespace-nowrap">({row.months.toFixed(1)} incl. committed)</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5"><span className="font-mono text-slate-300">{(row.availPdx ?? row.portland).toLocaleString()}</span> <CoverageCell months={row.monthsPdx} /></td>
+                      <td className="px-3 py-2.5"><span className="font-mono text-slate-300">{(row.availHk ?? row.hk).toLocaleString()}</span> <CoverageCell months={row.monthsHk} /></td>
                       <td className="px-3 py-2.5 text-muted font-sans">{row.supplier}</td>
                       <td className="px-3 py-2.5 font-mono text-muted">{row.lead_time_days ? `${row.lead_time_days}d` : '—'}</td>
                       <td className="px-3 py-2.5">
