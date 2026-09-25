@@ -10,7 +10,7 @@ import { calcMonthsCoverage, formatCurrency, isValidSku } from '../utils/coverag
 async function fetchReorderData() {
   const [skusRes, snapshotRes, forecastRes, tosRes, posRes, backlogRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('*')),
-    excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order').order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('inventory_snapshot').select('*').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
     // Lo que YA está en movimiento: si hay un TO en camino o una PO abierta
     // para el SKU, el faltante puede estar resuelto sin crear nada nuevo.
@@ -106,7 +106,9 @@ export function ReorderAlerts() {
         const months = calcMonthsCoverage(onHand, avg6);
         const monthsPdx = calcMonthsCoverage(portland, avg6);
         const monthsHk = calcMonthsCoverage(hk, avg6);
-        const committed = committedMap[sku.sku] ?? 0;
+        // Committed de NetSuite por ubicacion si el pipeline ya lo sube;
+        // si no, el total de qty_open del backlog.
+        const committed = snap.committed_total ?? committedMap[sku.sku] ?? 0;
         const available = onHand - committed;
         const monthsAvail = calcMonthsCoverage(Math.max(0, available), avg6);
 

@@ -65,7 +65,11 @@ function Chevron({ open }) {
 
 export function Backlog() {
   const { data, loading, error, refetch } = useQuery(fetchBacklog, []);
-  const [search, setSearch] = useState('');
+  // Deep-link: /backlog?so=SO20229 llega desde el Item Forecast (unidades
+  // comprometidas) con la SO ya buscada.
+  const [search, setSearch] = useState(
+    () => new URLSearchParams(window.location.search).get('so') ?? ''
+  );
   const [statusFilter, setStatusFilter] = useState('all');
   const [abiertos, setAbiertos] = useState(() => new Set());
   const { data: trackMatches } = useQuery(() => buscarTracking(search), [search]);

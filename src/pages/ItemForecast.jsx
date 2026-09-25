@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { FitText } from '../components/FitText';
 import {
@@ -491,16 +491,17 @@ export function ItemForecast() {
   // Siguen contando como On Hand hasta que se despachan, pero no son tuyas.
   // Available = On Hand - Committed es lo unico realmente disponible.
   const openSos = data?.openSos ?? [];
-  const committed = openSos.reduce((s, r) => s + (r.qty_open ?? 0), 0);
+  const committedBacklog = openSos.reduce((s, r) => s + (r.qty_open ?? 0), 0);
+  // Preferir el Committed de NETSUITE por ubicacion (columna del snapshot,
+  // subida por el pipeline cuando existen las columnas — SQL_committed.sql);
+  // si todavia no esta, cae al total del backlog.
+  const committed = snap.committed_total ?? committedBacklog;
+  const committedPdx = snap.committed_portland ?? null;
+  const committedHk = snap.committed_hk ?? null;
   const available = onHand - committed;
   const a6c = computed?.a6 ?? 0;
   const coverageAvailable = a6c > 0 ? available / a6c : Infinity;
-  const sosResumen = openSos
-    .slice()
-    .sort((a, b) => (b.qty_open ?? 0) - (a.qty_open ?? 0))
-    .slice(0, 2)
-    .map(o => `${o.so_number} (${o.qty_open})`)
-    .join(' · ');
+
 
   // KPI card definitions
   const kpis = [
@@ -515,7 +516,28 @@ export function ItemForecast() {
       valueClass: committed > 0 ? 'text-warning' : 'text-muted',
       sub: sku && !loading
         ? (committed > 0
-            ? `${openSos.length} open order${openSos.length > 1 ? 's' : ''}${sosResumen ? ': ' + sosResumen : ''}`
+            ? (
+              <>
+                {committedPdx != null && `PDX ${committedPdx.toLocaleString()} · HK ${(committedHk ?? 0).toLocaleString()}`}
+                {committedPdx != null && openSos.length > 0 && ' · '}
+                {openSos
+                  .slice()
+                  .sort((a, b) => (b.qty_open ?? 0) - (a.qty_open ?? 0))
+                  .slice(0, 3)
+                  .map((o, i) => (
+                    <span key={o.so_number}>
+                      {i > 0 && ' · '}
+                      <Link to={`/backlog?so=${o.so_number}`} className="text-accent hover:text-accent/80">
+                        {o.so_number}
+                      </Link>
+                      {` (${o.qty_open})`}
+                    </span>
+                  ))}
+                {openSos.length > 3 && (
+                  <> · <Link to="/backlog" className="text-accent hover:text-accent/80">+{openSos.length - 3} more</Link></>
+                )}
+              </>
+            )
             : 'nothing reserved')
         : null,
     },
