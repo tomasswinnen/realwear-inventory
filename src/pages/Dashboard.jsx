@@ -18,10 +18,10 @@ import { calcMonthsCoverage, coverageColor, formatCurrency, isValidSku } from '.
 
 
 async function fetchDashboardData() {
-  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes, distStockFreshRes, pipelineFreshRes, runRes] = await Promise.all([
+  const [skusRes, valRes, snapshotRes, forecastRes, poRes, notesRes, salesRes, distStockFreshRes, pipelineFreshRes, backlogRes, runRes] = await Promise.all([
     excludeSkus(supabase.from('skus').select('sku, description, supplier, lead_time_days')),
     excludeSkus(supabase.from('inventory_valuation').select('sku, inv_value, on_hand').order('updated_at', { ascending: false })),
-    excludeSkus(supabase.from('inventory_snapshot').select('sku, on_hand_total, on_hand_portland, on_hand_hk, on_order, updated_at').order('updated_at', { ascending: false })),
+    excludeSkus(supabase.from('inventory_snapshot').select('*').order('updated_at', { ascending: false })),
     excludeSkus(supabase.from('demand_forecast').select('sku, avg_3m, avg_6m, total_12m')),
     supabase.from('open_pos').select('po_number, sku, vendor, qty_open, amount_remaining, status, po_date').order('po_date', { ascending: false }),
     supabase.from('sku_notes').select('sku, note, status'),
@@ -32,6 +32,8 @@ async function fetchDashboardData() {
     // las otras tablas son de tipo `date`, así que de ahí sale el día pero no la
     // hora. Si la tabla no existe todavía (falta correr SQL_pipeline_runs.sql),
     // esto devuelve error y se ignora: el resto del dashboard funciona igual.
+    // Comprometido en SOs abiertas: fallback cuando committed_* aun no cargo
+    excludeSkus(supabase.from('sales_backlog').select('sku, qty_open').gt('qty_open', 0)),
     supabase.from('pipeline_runs').select('finished_at').eq('ok', true)
       .order('finished_at', { ascending: false }).limit(1),
   ]);
@@ -49,6 +51,7 @@ async function fetchDashboardData() {
     forecast: forecastRes.data,
     openPOs: poRes.data,
     notes: notesRes.data ?? [],
+    backlog: backlogRes?.error ? [] : backlogRes?.data ?? [],
     sales: salesRes.data ?? [],
     snapshotUpdated: snapshotRes.data?.[0]?.updated_at ?? null,
     distStockUpdated: distStockFreshRes.data?.[0]?.updated_at ?? null,
@@ -66,7 +69,7 @@ function formatSaleMonth(isoDate) {
   return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1]} ${y}`;
 }
 
-function buildCoverageMap(skus, snapshot, forecast, onOrderBySku = {}) {
+function buildCoverageMap(skus, snapshot, forecast, onOrderBySku = {}, committedMap = {}) {
   const latestSnapshot = {};
   for (const s of snapshot) {
     if (!latestSnapshot[s.sku]) latestSnapshot[s.sku] = s;
@@ -83,17 +86,26 @@ function buildCoverageMap(skus, snapshot, forecast, onOrderBySku = {}) {
     const onHand = snap?.on_hand_total ?? 0;
     const portland = snap?.on_hand_portland ?? 0;
     const hk = snap?.on_hand_hk ?? 0;
+    // Committed a open SOs: preferimos las columnas por ubicación de NetSuite
+    // (committed_*); si todavía no están cargadas, caemos a la suma del backlog.
+    const committed = snap?.committed_total ?? committedMap[sku.sku] ?? 0;
+    const available = onHand - committed;
+    const availPdx = snap?.committed_portland != null ? portland - snap.committed_portland : portland;
+    const availHk = snap?.committed_hk != null ? hk - snap.committed_hk : hk;
     const onOrder = onOrderBySku[sku.sku] ?? snap?.on_order ?? 0;
-    const months = calcMonthsCoverage(onHand, avgSales);
-    const monthsPortland = calcMonthsCoverage(portland, avgSales);
-    const monthsHk = calcMonthsCoverage(hk, avgSales);
-    const monthsWithOrder = calcMonthsCoverage(onHand + onOrder, avgSales);
-    const monthsPortlandWithOrder = calcMonthsCoverage(portland + onOrder, avgSales);
-    const monthsHkWithOrder = calcMonthsCoverage(hk + onOrder, avgSales);
+    // Cobertura calculada sobre AVAILABLE (on hand − committed), igual que Reorder Alerts.
+    const months = calcMonthsCoverage(Math.max(0, available), avgSales);
+    const monthsOnHand = calcMonthsCoverage(onHand, avgSales);
+    const monthsPortland = calcMonthsCoverage(Math.max(0, availPdx), avgSales);
+    const monthsHk = calcMonthsCoverage(Math.max(0, availHk), avgSales);
+    const monthsWithOrder = calcMonthsCoverage(Math.max(0, available) + onOrder, avgSales);
+    const monthsPortlandWithOrder = calcMonthsCoverage(Math.max(0, availPdx) + onOrder, avgSales);
+    const monthsHkWithOrder = calcMonthsCoverage(Math.max(0, availHk) + onOrder, avgSales);
     return {
       ...sku,
-      onHand, onOrder, avgSales, avg3, consumed6, total12,
-      months, monthsPortland, monthsHk,
+      onHand, committed, available, availPdx, availHk,
+      onOrder, avgSales, avg3, consumed6, total12,
+      months, monthsOnHand, monthsPortland, monthsHk,
       monthsWithOrder, monthsPortlandWithOrder, monthsHkWithOrder,
     };
   });
@@ -115,9 +127,11 @@ function CoverageTooltip({ active, payload }) {
     <div style={CHART_TOOLTIP_STYLE} className="px-3 py-2">
       <p className="font-sans text-white text-xs mb-1">{d.sku}</p>
       <p className="font-mono text-xs">
-        {isFinite(d.months) ? `${d.months.toFixed(1)} mo` : '∞'} coverage
+        {isFinite(d.months) ? `${d.months.toFixed(1)} mo` : '∞'} coverage (avail)
       </p>
-      <p className="font-mono text-xs text-muted">{d.onHand} on hand</p>
+      <p className="font-mono text-xs text-muted">
+        {d.available} available · {d.onHand} on hand
+      </p>
     </div>
   );
 }
@@ -148,7 +162,11 @@ export function Dashboard() {
     for (const po of data.openPOs ?? []) {
       onOrderBySku[po.sku] = (onOrderBySku[po.sku] ?? 0) + (po.qty_open ?? 0);
     }
-    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.forecast, onOrderBySku);
+    const committedMap = {};
+    for (const b of data.backlog ?? []) {
+      committedMap[b.sku] = (committedMap[b.sku] ?? 0) + (b.qty_open ?? 0);
+    }
+    const coverage = buildCoverageMap(data.skus.filter(s => isValidSku(s.sku)), data.snapshot, data.forecast, onOrderBySku, committedMap);
 
     const urgent = coverage.filter(s => isFinite(s.months) && s.months < 1 && s.total12 > 0);
     const watchList = coverage.filter(s => isFinite(s.months) && s.months >= 1 && s.months < 3 && s.total12 > 0);
@@ -233,13 +251,13 @@ export function Dashboard() {
             <KPICard
               label="Urgent Reorder"
               value={kpis.urgent}
-              sub="< 1 month coverage"
+              sub="< 1 month available"
               color="text-danger"
             />
             <KPICard
               label="Watch List"
               value={kpis.watchList}
-              sub="1–3 months coverage"
+              sub="1–3 months available"
               color="text-warning"
             />
             <KPICard
@@ -272,13 +290,13 @@ export function Dashboard() {
           <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
             <div className="px-4 py-3 border-b border-white/[0.08] flex items-center justify-between">
               <h2 className="text-sm font-sans font-semibold text-white">Needs Reorder</h2>
-              <span className="text-xs font-mono text-danger">{urgentItems?.length ?? 0} SKUs &lt; 3 mo</span>
+              <span className="text-xs font-mono text-danger">{urgentItems?.length ?? 0} SKUs &lt; 3 mo available</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
-                    {['SKU', 'Description', 'On Hand', 'On Order', 'Consumed (6m)', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
+                    {['SKU', 'Description', 'On Hand', 'Available', 'On Order', 'Consumed (6m)', 'Total Mo', 'PDX Mo', 'HK Mo', 'Supplier'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                     ))}
                   </tr>
@@ -286,7 +304,7 @@ export function Dashboard() {
                 <tbody>
                   {urgentItems?.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
+                      <td colSpan={10} className="px-4 py-6 text-center text-muted font-mono">No items need reordering</td>
                     </tr>
                   ) : urgentItems?.map(item => (
                     <tr
@@ -313,6 +331,12 @@ export function Dashboard() {
                       </td>
                       <td className="px-4 py-3 text-slate-300 font-sans max-w-[200px] truncate" title={item.description}>{item.description}</td>
                       <td className="px-4 py-3 font-mono text-white">{item.onHand.toLocaleString()}</td>
+                      <td className="px-4 py-3 font-mono">
+                        <span className={item.committed > 0 ? 'text-warning' : 'text-white'}>{item.available.toLocaleString()}</span>
+                        {item.committed > 0 && (
+                          <div className="text-[10px] text-muted leading-none mt-0.5">−{item.committed.toLocaleString()} committed</div>
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-mono">
                         {item.onOrder > 0
                           ? <span className="text-success">{item.onOrder.toLocaleString()}</span>
