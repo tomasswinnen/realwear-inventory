@@ -175,7 +175,7 @@ export function Layout() {
       <aside className="hidden lg:flex static w-56 flex-col bg-[#0d1620] border-r border-white/[0.08]">
         {/* Logo */}
         <div className="flex items-center gap-2.5 px-4 py-5 border-b border-white/[0.08]">
-          <LogoMark className="w-6 h-6 text-white" />
+          <LogoMark className="h-5 w-auto text-white" />
           <span className="font-sans font-semibold text-white text-sm tracking-wide">
             Inventory
           </span>
@@ -217,7 +217,7 @@ export function Layout() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar mobile: logo + título + refresh (en modo app no hay botón de recarga) */}
         <header className="lg:hidden sticky top-0 z-20 flex items-center gap-3 px-4 pb-2.5 pt-[calc(0.625rem+env(safe-area-inset-top))] border-b border-white/[0.08] bg-[#0d1620]/85 backdrop-blur-xl">
-          <LogoMark className="w-5 h-5 text-white shrink-0" />
+          <LogoMark className="h-[18px] w-auto text-white shrink-0" />
           <span className="font-sans font-semibold text-white text-[15px] tracking-wide truncate">
             Inventory
           </span>
