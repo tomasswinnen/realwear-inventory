@@ -69,7 +69,7 @@ async function exportarExcel(planes, seriales) {
     'SO': w.so_number, 'SO Date': w.so_date,
     'Billed To': w.customer, 'End Customer': w.end_customer || '',
     'Plan': w.sku, 'Qty': w.qty, 'Years': w.plan_years,
-    'Start': w.start_date, 'Start Estimated': w.start_source === 'sold_date' ? '' : 'yes',
+    'Start': w.start_date, 'Start Estimated': w.start_source === 'so_date' ? 'yes' : '',
     'End': w.end_date, 'Status': estadoGarantia(w.end_date),
     'Serials Listed': w.serial_count,
   }));
@@ -150,7 +150,7 @@ export function Warranties() {
       sinSerial: vigPlanes.reduce((s, w) => s + Math.max(0, (w.qty ?? 0) - (w.serial_count ?? 0)), 0),
       porVencer: vigPlanes.filter(w => estadoGarantia(w.end_date) === 'expiring').length,
       equiposPorVencer: vigSer.filter(s => estadoGarantia(s.end_date) === 'expiring').length,
-      estimados: vigPlanes.filter(w => w.start_source !== 'sold_date').length,
+      estimados: vigPlanes.filter(w => w.start_source === 'so_date').length,
     };
     return { planes, seriales, clientes, kpi };
   }, [data, q, filtro]);
@@ -358,7 +358,7 @@ function TablaCoberturas({ planes }) {
                 </span>
               </td>
               <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
-                {w.start_date}{w.start_source !== 'sold_date' && <span title="estimated from the SO date">~</span>}
+                {w.start_date}{w.start_source === 'so_date' && <span title="estimated from the SO date">~</span>}
                 {' → '}{w.end_date}
               </td>
               <td className="px-4 py-2.5"><WarrantyBadge w={w} /></td>

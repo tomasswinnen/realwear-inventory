@@ -11,7 +11,7 @@ export function WarrantyBadge({ w, compact = false }) {
   const detalle = [
     w.sku && `Plan ${w.sku}`,
     `${w.start_date} → ${w.end_date}`,
-    w.start_source && w.start_source !== 'sold_date' && 'start date estimated from the SO date',
+    w.start_source === 'so_date' && 'start date estimated from the SO date',
     ec ? `End customer: ${ec}` : 'End customer not recorded in NetSuite',
     w.so_number && `SO ${w.so_number}`,
   ].filter(Boolean).join('\n');
@@ -25,7 +25,7 @@ export function WarrantyBadge({ w, compact = false }) {
           {estado === 'expired' ? w.end_date : `${w.end_date}${dias <= 90 ? ` · ${dias}d` : ''}`}
         </span>
       )}
-      {w.start_source && w.start_source !== 'sold_date' && (
+      {w.start_source === 'so_date' && (
         <span className="opacity-60" title="Start date estimated from the SO date">~</span>
       )}
     </span>
