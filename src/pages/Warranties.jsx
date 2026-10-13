@@ -1,0 +1,399 @@
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { supabase, paginar } from '../lib/supabase';
+import { useQuery } from '../hooks/useQuery';
+import { QueryError } from '../components/QueryError';
+import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
+import { KPICard } from '../components/KPICard';
+import { WarrantyBadge } from '../components/WarrantyBadge';
+import {
+  HOY, DIAS_POR_VENCER, diasHasta, estadoGarantia, nombreCuenta, clienteFinal,
+} from '../utils/warranty';
+
+// Garantías / service plans. Fuente: tablas `warranties` (una fila por línea
+// de plan vendida) y `warranty_serials` (una fila por equipo cubierto), que
+// el pipeline arma con las columnas custom de la LÍNEA de la sales order en
+// NetSuite: custcol_sp_end_customer, custcol_sp_sold_date y
+// custcol_serial_numbers. El serial en sí (inventorynumber) no tiene fecha de
+// garantía, así que esto es lo único que hay.
+//
+// Dos cosas que la página dice en vez de esconder:
+//   1. `customer` es a quién se le FACTURÓ — casi siempre un distribuidor.
+//      El cliente final es `end_customer`, y se carga a mano en NetSuite: en
+//      2026 está en ~1 de cada 5 líneas, así que muchas coberturas solo
+//      llegan hasta el distribuidor.
+//   2. Cuando no hay sold_date, el inicio se estima con la fecha de la SO.
+//      Esas filas van marcadas con "~".
+
+// Las dos tablas se traen con tolerancia: hasta que alguien corra
+// SQL_warranties.sql en Supabase no existen, y en ese caso la página tiene que
+// explicar qué falta en vez de tirar un error de PostgREST a la cara.
+async function fetchWarranties() {
+  const traer = async tabla => {
+    try {
+      return await paginar(() => supabase.from(tabla).select('*')
+        .order('end_date', { ascending: false }));
+    } catch {
+      return null; // tabla ausente
+    }
+  };
+  const [planes, seriales] = await Promise.all([
+    traer('warranties'), traer('warranty_serials'),
+  ]);
+  return {
+    planes: planes ?? [],
+    seriales: seriales ?? [],
+    falta: planes === null,
+  };
+}
+
+const FILTROS = {
+  vigentes: { label: 'In warranty', test: e => e === 'active' || e === 'expiring' },
+  porvencer: { label: `Expiring ≤${DIAS_POR_VENCER}d`, test: e => e === 'expiring' },
+  vencidas: { label: 'Expired', test: e => e === 'expired' },
+  todas: { label: 'All', test: () => true },
+};
+
+function coincide(w, q) {
+  if (!q) return true;
+  const t = q.toLowerCase();
+  return [w.end_customer, w.customer, w.so_number, w.sku, w.serial]
+    .some(v => (v ?? '').toLowerCase().includes(t));
+}
+
+async function exportarExcel(planes, seriales) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+
+  const hojaPlanes = planes.map(w => ({
+    'SO': w.so_number, 'SO Date': w.so_date,
+    'Billed To': w.customer, 'End Customer': w.end_customer || '',
+    'Plan': w.sku, 'Qty': w.qty, 'Years': w.plan_years,
+    'Start': w.start_date, 'Start Estimated': w.start_source === 'sold_date' ? '' : 'yes',
+    'End': w.end_date, 'Status': estadoGarantia(w.end_date),
+    'Serials Listed': w.serial_count,
+  }));
+  const ws1 = XLSX.utils.json_to_sheet(hojaPlanes);
+  ws1['!cols'] = [{ wch: 11 }, { wch: 11 }, { wch: 32 }, { wch: 28 }, { wch: 14 },
+                  { wch: 6 }, { wch: 6 }, { wch: 11 }, { wch: 14 }, { wch: 11 },
+                  { wch: 11 }, { wch: 13 }];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Coverages');
+
+  const ws2 = XLSX.utils.json_to_sheet(seriales.map(s => ({
+    'Serial': s.serial, 'Item': s.sku, 'SO': s.so_number,
+    'End Customer': s.end_customer || '', 'Billed To': s.customer,
+    'Start': s.start_date, 'End': s.end_date, 'Status': estadoGarantia(s.end_date),
+  })));
+  ws2['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 11 }, { wch: 28 }, { wch: 32 },
+                  { wch: 11 }, { wch: 11 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Devices');
+
+  XLSX.writeFile(wb, `warranties_${HOY()}.xlsx`);
+}
+
+export function Warranties() {
+  const [q, setQ] = useState('');
+  const [filtro, setFiltro] = useState('vigentes');
+  const [vista, setVista] = useState('customers');
+  const [exportando, setExportando] = useState(false);
+  const { data, loading, error, refetch } = useQuery(fetchWarranties, []);
+
+  const v = useMemo(() => {
+    if (!data) return null;
+    const test = FILTROS[filtro].test;
+    const planes = data.planes.filter(w => test(estadoGarantia(w.end_date)) && coincide(w, q));
+    const seriales = data.seriales.filter(s => test(estadoGarantia(s.end_date)) && coincide(s, q));
+
+    // Agrupado por cliente. La clave es el cliente final cuando está cargado;
+    // si no, la cuenta facturada, marcada como distribuidor para que no se
+    // confunda con un usuario final.
+    const porCliente = new Map();
+    const clave = r => clienteFinal(r) ?? `__dist__${r.customer ?? '?'}`;
+    for (const w of planes) {
+      const k = clave(w);
+      if (!porCliente.has(k)) {
+        porCliente.set(k, {
+          k,
+          nombre: clienteFinal(w) ?? nombreCuenta(w.customer),
+          esFinal: Boolean(clienteFinal(w)),
+          distribuidores: new Set(),
+          planes: 0, unidades: 0, equipos: new Set(),
+          proximo: null, skus: new Set(),
+        });
+      }
+      const g = porCliente.get(k);
+      g.planes += 1;
+      g.unidades += w.qty ?? 0;
+      if (w.customer) g.distribuidores.add(nombreCuenta(w.customer));
+      if (w.sku) g.skus.add(w.sku);
+      const vigente = estadoGarantia(w.end_date) !== 'expired';
+      if (vigente && (g.proximo === null || w.end_date < g.proximo)) g.proximo = w.end_date;
+    }
+    for (const s of seriales) {
+      const g = porCliente.get(clave(s));
+      if (g) g.equipos.add(s.serial);
+    }
+    const clientes = [...porCliente.values()]
+      .sort((a, b) => (b.equipos.size - a.equipos.size) || (b.unidades - a.unidades));
+
+    // KPIs: siempre sobre el total, no sobre el filtro — son la foto de hoy.
+    const vigPlanes = data.planes.filter(w => estadoGarantia(w.end_date) !== 'expired');
+    const vigSer = data.seriales.filter(s => estadoGarantia(s.end_date) !== 'expired');
+    const kpi = {
+      equipos: vigSer.length,
+      planes: vigPlanes.length,
+      finales: new Set(vigPlanes.map(clienteFinal).filter(Boolean)).size,
+      sinFinal: vigPlanes.filter(w => !clienteFinal(w)).length,
+      porVencer: vigPlanes.filter(w => estadoGarantia(w.end_date) === 'expiring').length,
+      equiposPorVencer: vigSer.filter(s => estadoGarantia(s.end_date) === 'expiring').length,
+      estimados: vigPlanes.filter(w => w.start_source !== 'sold_date').length,
+    };
+    return { planes, seriales, clientes, kpi };
+  }, [data, q, filtro]);
+
+  if (error) return <QueryError message={error} onRetry={refetch} />;
+
+  const exportar = async () => {
+    if (exportando || !v) return;
+    setExportando(true);
+    try { await exportarExcel(v.planes, v.seriales); } finally { setExportando(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-sans font-semibold text-white">Warranties</h1>
+        <p className="text-xs text-muted font-mono mt-0.5">
+          Service plan coverage by end customer — from the plan lines on each sales order
+        </p>
+      </div>
+
+      {loading || !v ? <KPISkeleton /> : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <KPICard label="Devices in warranty" value={v.kpi.equipos.toLocaleString()}
+            sub={`${v.kpi.planes} active coverages`} accent />
+          <KPICard label="End customers" value={v.kpi.finales.toLocaleString()}
+            sub={`${v.kpi.sinFinal} coverages with distributor only`} />
+          <KPICard label={`Expiring ≤${DIAS_POR_VENCER}d`} value={v.kpi.porVencer.toLocaleString()}
+            sub={`${v.kpi.equiposPorVencer} devices`}
+            color={v.kpi.porVencer ? 'text-warning' : undefined} />
+          <KPICard label="Estimated start" value={v.kpi.estimados.toLocaleString()}
+            sub="no sold date in NetSuite" />
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="search"
+          placeholder="End customer, distributor, SO #, serial or plan SKU…"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-80"
+        />
+        <div className="flex items-center gap-1 flex-wrap">
+          {Object.entries(FILTROS).map(([k, f]) => (
+            <button key={k} onClick={() => setFiltro(k)}
+              className={`px-2.5 py-1.5 rounded text-[11px] font-mono transition-colors ${
+                filtro === k ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 sm:ml-auto">
+          {[['customers', 'By customer'], ['coverages', 'By coverage'], ['devices', 'By device']].map(([k, label]) => (
+            <button key={k} onClick={() => setVista(k)}
+              className={`px-2.5 py-1.5 rounded text-[11px] font-mono border transition-colors ${
+                vista === k
+                  ? 'border-accent/50 text-white'
+                  : 'border-white/[0.12] text-muted hover:text-white'}`}>
+              {label}
+            </button>
+          ))}
+          <button onClick={exportar} disabled={exportando}
+            title="Dos hojas: coberturas y equipos, con el filtro actual aplicado"
+            className="px-3 py-1.5 rounded border border-white/[0.12] text-[11px] font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
+            {exportando ? 'Exporting…' : 'Export Excel'}
+          </button>
+        </div>
+      </div>
+
+      {data?.falta && (
+        <p className="text-xs font-mono text-warning bg-warning/5 border border-warning/20 rounded px-3 py-2">
+          Warranty tables not created yet — run SQL_warranties.sql in Supabase, then one pipeline run.
+        </p>
+      )}
+
+      {loading || !v ? <TableSkeleton rows={10} cols={6} /> : (
+        <>
+          {vista === 'customers' && <TablaClientes clientes={v.clientes} />}
+          {vista === 'coverages' && <TablaCoberturas planes={v.planes} />}
+          {vista === 'devices' && <TablaEquipos seriales={v.seriales} />}
+
+          <p className="text-[10px] text-muted font-mono leading-relaxed">
+            Coverage lives on the sales order line in NetSuite, not on the serial.
+            “Billed to” is the account that bought it — usually a distributor; the end
+            customer is a field someone fills in by hand, so it is missing on many
+            recent orders. A “~” means the start date was estimated from the SO date
+            because no sold date was recorded.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Vacio({ cols, children }) {
+  return (
+    <tr><td colSpan={cols} className="px-4 py-8 text-center text-muted font-mono">
+      {children}
+    </td></tr>
+  );
+}
+
+function Panel({ children }) {
+  return (
+    <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+      <div className="overflow-x-auto">{children}</div>
+    </div>
+  );
+}
+
+function Encabezados({ cols }) {
+  return (
+    <thead>
+      <tr className="border-b border-white/[0.06]">
+        {cols.map(h => (
+          <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
+function TablaClientes({ clientes }) {
+  return (
+    <Panel>
+      <table className="w-full text-xs">
+        <Encabezados cols={['Customer', 'Devices', 'Coverages', 'Units', 'Plans', 'Next expiry']} />
+        <tbody>
+          {clientes.length === 0 ? (
+            <Vacio cols={6}>Nothing matches — or the warranties tables are still empty</Vacio>
+          ) : clientes.map(g => {
+            const dias = g.proximo ? diasHasta(g.proximo) : null;
+            return (
+              <tr key={g.k} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+                <td className="px-4 py-2.5 max-w-[320px]">
+                  <p className="font-sans text-white truncate" title={g.nombre}>{g.nombre}</p>
+                  <p className="text-[10px] font-mono text-muted truncate"
+                    title={[...g.distribuidores].join(', ')}>
+                    {g.esFinal
+                      ? `via ${[...g.distribuidores].join(', ') || '—'}`
+                      : 'distributor — end customer not recorded'}
+                  </p>
+                </td>
+                <td className="px-4 py-2.5 font-num text-white">{g.equipos.size || '—'}</td>
+                <td className="px-4 py-2.5 font-num text-slate-300">{g.planes}</td>
+                <td className="px-4 py-2.5 font-num text-slate-300">{g.unidades}</td>
+                <td className="px-4 py-2.5 font-mono text-muted max-w-[200px] truncate"
+                  title={[...g.skus].join(', ')}>{[...g.skus].join(' · ')}</td>
+                <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                  {g.proximo
+                    ? <span className={dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}>
+                        {g.proximo}{dias <= DIAS_POR_VENCER ? ` · ${dias}d` : ''}
+                      </span>
+                    : <span className="text-muted">expired</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Panel>
+  );
+}
+
+function TablaCoberturas({ planes }) {
+  return (
+    <Panel>
+      <table className="w-full text-xs">
+        <Encabezados cols={['SO', 'End customer', 'Billed to', 'Plan', 'Qty', 'Coverage', 'Status']} />
+        <tbody>
+          {planes.length === 0 ? <Vacio cols={7}>Nothing matches</Vacio> : planes.slice(0, 500).map((w, i) => (
+            <tr key={`${w.so_number}-${w.sku}-${i}`} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+              <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                <Link to={`/backlog?so=${w.so_number}`} className="text-accent hover:text-accent/80">
+                  {w.so_number}
+                </Link>
+                <span className="block text-[10px] text-muted">{w.so_date}</span>
+              </td>
+              <td className="px-4 py-2.5 font-sans max-w-[220px] truncate"
+                title={w.end_customer || 'not recorded in NetSuite'}>
+                {w.end_customer
+                  ? <span className="text-white">{w.end_customer}</span>
+                  : <span className="text-muted">—</span>}
+              </td>
+              <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[220px] truncate"
+                title={w.customer}>{nombreCuenta(w.customer)}</td>
+              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
+                {w.sku} <span className="opacity-60">{w.plan_years}y</span>
+              </td>
+              <td className="px-4 py-2.5 font-num text-slate-300">
+                {w.qty}
+                {w.serial_count > 0 && (
+                  <span className="text-muted text-[10px]"> · {w.serial_count} s/n</span>
+                )}
+              </td>
+              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
+                {w.start_date}{w.start_source !== 'sold_date' && <span title="estimated from the SO date">~</span>}
+                {' → '}{w.end_date}
+              </td>
+              <td className="px-4 py-2.5"><WarrantyBadge w={w} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {planes.length > 500 && (
+        <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
+          Showing the first 500 of {planes.length.toLocaleString()} — narrow the search or use Export Excel.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+function TablaEquipos({ seriales }) {
+  return (
+    <Panel>
+      <table className="w-full text-xs">
+        <Encabezados cols={['Serial', 'Item', 'End customer', 'Billed to', 'Coverage', 'Status']} />
+        <tbody>
+          {seriales.length === 0 ? <Vacio cols={6}>Nothing matches</Vacio> : seriales.slice(0, 500).map(s => (
+            <tr key={s.serial} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+              <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">
+                <Link to={`/serials?q=${s.serial}`} className="hover:text-accent">{s.serial}</Link>
+                {s.so_number && <span className="block text-[10px] text-muted">{s.so_number}</span>}
+              </td>
+              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{s.sku}</td>
+              <td className="px-4 py-2.5 font-sans max-w-[220px] truncate" title={s.end_customer || 'not recorded'}>
+                {s.end_customer
+                  ? <span className="text-white">{s.end_customer}</span>
+                  : <span className="text-muted">—</span>}
+              </td>
+              <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[200px] truncate"
+                title={s.customer}>{nombreCuenta(s.customer)}</td>
+              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
+                {s.start_date} → {s.end_date}
+              </td>
+              <td className="px-4 py-2.5"><WarrantyBadge w={s} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {seriales.length > 500 && (
+        <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
+          Showing the first 500 of {seriales.length.toLocaleString()} — narrow the search or use Export Excel.
+        </p>
+      )}
+    </Panel>
+  );
+}

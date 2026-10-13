@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { supabase, excludeSkus } from '../lib/supabase';
+import { Link, useSearchParams } from 'react-router-dom';
+import { supabase, excludeSkus, paginar } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton } from '../components/Skeleton';
 import { isValidSku } from '../utils/coverage';
+import { WarrantyBadge } from '../components/WarrantyBadge';
+import { estadoGarantia, ESTADO_LABEL } from '../utils/warranty';
 
 // Números de serie AGRUPADOS POR ORDEN: una fila por sales order (o por
 // documento, si el evento no vino de una SO), desplegable para ver qué
@@ -53,7 +55,17 @@ async function fetchSerials(q) {
     if (lote.length < PAGINA) break;
   }
   const skusRes = await excludeSkus(supabase.from('skus').select('sku, description'));
-  return { rows: filas, skus: skusRes.data ?? [] };
+
+  // Cobertura de garantía por serial. La tabla es chica (~2k filas) y se trae
+  // entera: así el badge sale igual para los seriales que vinieron por
+  // búsqueda server-side, sin una segunda consulta por cada orden. Si todavía
+  // no se corrió SQL_warranties.sql, la página sigue andando sin la columna.
+  let garantias;
+  try {
+    garantias = await paginar(() => supabase.from('warranty_serials').select('*'));
+  } catch { garantias = []; }
+
+  return { rows: filas, skus: skusRes.data ?? [], garantias };
 }
 
 const DOC_LABEL = {
@@ -66,7 +78,7 @@ const DOC_LABEL = {
 // completa si no hay búsqueda (~160k filas, tarda un par de minutos) — y arma
 // un .xlsx de verdad. SheetJS se carga recién acá (import dinámico), así que
 // no infla la página para quien nunca exporta.
-async function exportarExcel(q, descBySku, onProgreso) {
+async function exportarExcel(q, descBySku, cobertura, onProgreso) {
   const XLSX = await import('xlsx');
   const filas = [];
   let conSo = true;
@@ -83,19 +95,26 @@ async function exportarExcel(q, descBySku, onProgreso) {
     if (lote.length < 1000) break;
   }
 
-  const datos = filas.map(r => ({
-    'Serial': r.serial,
-    'Item': r.sku,
-    'Item Name': descBySku[r.sku] ?? '',
-    'Sales Order': r.so_number ?? '',
-    'Doc Type': DOC_LABEL[r.doc_type] ?? r.doc_type,
-    'Doc Number': r.doc_number,
-    'Date': r.fecha,
-    'Customer': r.cliente ?? '',
-  }));
+  const datos = filas.map(r => {
+    const g = cobertura.get(r.serial);
+    return {
+      'Serial': r.serial,
+      'Item': r.sku,
+      'Item Name': descBySku[r.sku] ?? '',
+      'Sales Order': r.so_number ?? '',
+      'Doc Type': DOC_LABEL[r.doc_type] ?? r.doc_type,
+      'Doc Number': r.doc_number,
+      'Date': r.fecha,
+      'Customer': r.cliente ?? '',
+      'End Customer': g?.end_customer ?? '',
+      'Warranty End': g?.end_date ?? '',
+      'Warranty Status': g ? ESTADO_LABEL[estadoGarantia(g.end_date)] : '',
+    };
+  });
   const ws = XLSX.utils.json_to_sheet(datos);
   ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 34 }, { wch: 12 },
-                 { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 32 }];
+                 { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 32 },
+                 { wch: 28 }, { wch: 12 }, { wch: 14 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Serial Numbers');
   const hoy = new Date().toISOString().slice(0, 10);
@@ -113,8 +132,11 @@ function Chevron({ open }) {
 }
 
 export function Serials() {
-  const [input, setInput] = useState('');
-  const [q, setQ] = useState('');
+  // ?q= permite entrar directo a un serial desde otra página (Warranties).
+  const [params] = useSearchParams();
+  const inicial = params.get('q') ?? '';
+  const [input, setInput] = useState(inicial);
+  const [q, setQ] = useState(inicial);
   const [abiertas, setAbiertas] = useState(() => new Set());
   const [exportando, setExportando] = useState(null); // null | filas bajadas
   const [errorExport, setErrorExport] = useState('');
@@ -130,9 +152,10 @@ export function Serials() {
   // sus eventos (fulfillment + factura del mismo equipo), después se agrupan
   // los seriales bajo su sales order. Si un evento no tiene SO (cash sale, o
   // datos anteriores a la columna so_number), la orden es el documento mismo.
-  const { ordenes, descBySku } = useMemo(() => {
-    if (!data) return { ordenes: [], descBySku: {} };
+  const { ordenes, descBySku, cobertura } = useMemo(() => {
+    if (!data) return { ordenes: [], descBySku: {}, cobertura: new Map() };
     const descBySku = Object.fromEntries(data.skus.map(s => [s.sku, s.description]));
+    const cobertura = new Map((data.garantias ?? []).map(g => [g.serial, g]));
     const porSerial = new Map();
     for (const r of data.rows) {
       if (!porSerial.has(r.serial)) {
@@ -158,14 +181,25 @@ export function Serials() {
         });
       }
       const g = porOrden.get(clave);
-      g.seriales.push({ ...s, ultimo });
+      g.seriales.push({ ...s, ultimo, garantia: cobertura.get(s.serial) ?? null });
       if (s.sku) g.skus.add(s.sku);
       if (ultimo.fecha > g.fecha) g.fecha = ultimo.fecha;
+    }
+    // Resumen de garantía por orden: la cobertura que vence PRIMERO (la que
+    // urge) y el cliente final, que es el dato que no está en serial_shipments
+    // — ahí el "customer" es a quién se le facturó, normalmente el distribuidor.
+    for (const g of porOrden.values()) {
+      const cobs = g.seriales.map(s => s.garantia).filter(Boolean);
+      g.cobertura = cobs.length
+        ? cobs.reduce((a, b) => (a.end_date <= b.end_date ? a : b))
+        : null;
+      g.cubiertos = cobs.length;
+      g.clienteFinal = cobs.map(c => (c.end_customer ?? '').trim()).find(Boolean) ?? null;
     }
     const ordenes = [...porOrden.values()]
       .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
       .slice(0, 300);
-    return { ordenes, descBySku };
+    return { ordenes, descBySku, cobertura };
   }, [data]);
 
   const buscar = e => {
@@ -178,7 +212,7 @@ export function Serials() {
     setExportando(0);
     setErrorExport('');
     try {
-      await exportarExcel(q, descBySku, setExportando);
+      await exportarExcel(q, descBySku, cobertura, setExportando);
     } catch (e) {
       setErrorExport(`Export failed: ${e.message}`);
     }
@@ -253,14 +287,14 @@ export function Serials() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['Order', 'Customer', 'Serials', 'SKUs', 'Last Event'].map(h => (
+                  {['Order', 'Customer', 'Serials', 'Warranty', 'SKUs', 'Last Event'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {ordenes.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-muted font-mono">
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted font-mono">
                     {q ? `Nothing matches "${q}"` : 'No serial data yet — runs with the pipeline'}
                   </td></tr>
                 ) : ordenes.map(g => (
@@ -302,6 +336,14 @@ function OrdenCard({ g, descBySku, open, onToggle }) {
           <span className="font-sans text-slate-300 text-xs truncate">{g.cliente ?? '—'}</span>
           <span className="font-mono text-muted text-[11px] whitespace-nowrap shrink-0">{g.fecha}</span>
         </div>
+        {(g.cobertura || g.clienteFinal) && (
+          <div className="mt-1.5 flex items-center gap-2 min-w-0">
+            {g.cobertura && <WarrantyBadge w={g.cobertura} />}
+            {g.clienteFinal && (
+              <span className="font-sans text-[10px] text-muted truncate">{g.clienteFinal}</span>
+            )}
+          </div>
+        )}
         <p className="mt-1 font-mono text-muted text-[10px] truncate">
           {[...g.skus].map(sku => (descBySku[sku] ? `${sku} — ${descBySku[sku]}` : sku)).join(' · ') || '—'}
         </p>
@@ -323,6 +365,7 @@ function OrdenCard({ g, descBySku, open, onToggle }) {
                     <span className="text-slate-300">{ev.doc_number}</span>
                   </p>
                 ))}
+                {s.garantia && <div className="mt-1"><WarrantyBadge w={s.garantia} compact /></div>}
               </div>
             </div>
           ))}
@@ -349,8 +392,25 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
         </td>
         <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[240px] truncate" title={g.cliente}>
           {g.cliente ?? '—'}
+          {g.clienteFinal && (
+            <p className="text-[10px] text-muted truncate" title={`End customer: ${g.clienteFinal}`}>
+              end customer: {g.clienteFinal}
+            </p>
+          )}
         </td>
         <td className="px-4 py-2.5 font-mono text-white">{g.seriales.length}</td>
+        <td className="px-4 py-2.5 whitespace-nowrap">
+          {g.cobertura ? (
+            <>
+              <WarrantyBadge w={g.cobertura} />
+              {g.cubiertos < g.seriales.length && (
+                <span className="ml-1 text-[10px] font-mono text-muted">
+                  {g.cubiertos}/{g.seriales.length}
+                </span>
+              )}
+            </>
+          ) : <span className="text-[10px] font-mono text-muted">—</span>}
+        </td>
         <td className="px-4 py-2.5 font-mono text-muted max-w-[320px] truncate"
           title={[...g.skus].map(etiqueta).join('\n')}>
           {[...g.skus].map(etiqueta).join(' · ') || '—'}
@@ -359,11 +419,11 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
       </tr>
       {open && (
         <tr className="border-b border-white/[0.04] bg-white/[0.015]">
-          <td colSpan={5} className="px-6 py-3">
+          <td colSpan={6} className="px-6 py-3">
             <table className="w-full text-xs">
               <thead>
                 <tr>
-                  {['Serial', 'SKU', 'Documents'].map(h => (
+                  {['Serial', 'SKU', 'Documents', 'Warranty'].map(h => (
                     <th key={h} className="px-3 py-1.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[9px]">{h}</th>
                   ))}
                 </tr>
@@ -392,6 +452,19 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
                           </div>
                         ))}
                       </div>
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      {s.garantia ? (
+                        <>
+                          <WarrantyBadge w={s.garantia} />
+                          {s.garantia.end_customer && (
+                            <p className="mt-0.5 text-[10px] font-sans text-muted max-w-[180px] truncate"
+                              title={s.garantia.end_customer}>
+                              {s.garantia.end_customer}
+                            </p>
+                          )}
+                        </>
+                      ) : <span className="text-[10px] font-mono text-muted">no plan on record</span>}
                     </td>
                   </tr>
                 ))}

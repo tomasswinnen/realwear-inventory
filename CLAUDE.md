@@ -32,7 +32,8 @@ NetSuite (verdad contable) → pipeline Python en la PC de Tomas → Supabase �
 ventana de ~90 días), `shipping_costs`, `freight_invoices`, `monthly_sales`,
 `demand_forecast`, `lead_times`, `sku_margins`, `skus` (catálogo/filtro),
 `distributor_stock` (carga semi-manual desde "Inventory Q*.xlsx", 17
-distribuidores al 10/2026).
+distribuidores al 10/2026), `warranties` y `warranty_serials` (coberturas de
+service plan; ver regla abajo).
 
 ## Reglas de negocio (no romper)
 
@@ -52,6 +53,18 @@ distribuidores al 10/2026).
   flete inbound/aduana/transfer** — no la tiene por diseño.
 - `demand_forecast`: promedios 3/6 meses y suma 12 sobre MESES COMPLETOS
   (excluye el mes en curso), solo SKUs presentes en `monthly_sales`.
+- **Garantías**: en NetSuite NO viven en el serial (`inventorynumber` no tiene
+  fecha ni campos custom) sino en la LÍNEA de la SO:
+  `custcol_sp_end_customer` (cliente final atrás del distribuidor),
+  `custcol_sp_sold_date` (inicio) y `custcol_serial_numbers`. El fin se
+  calcula inicio + plazo del SKU (`PLAZO_PLAN` en `fetch_netsuite.py`); si no
+  hay sold_date se usa la fecha de la SO y la fila queda marcada
+  (`start_source`), que el sitio muestra con `~`. Los `*-SP-ADV*` con prefijo
+  de equipo (`NAV520-`, `ARC3-`, `520 Direct`…) son item GROUPS y NO se
+  cuentan: el plan real es la línea de adentro (`SSP-POP2Y`). `customer` es a
+  quién se facturó — casi siempre un distribuidor; el cliente final es
+  `end_customer`, carga manual en NetSuite y falta en ~4 de cada 5 líneas de
+  2026. Ver `WARRANTIES.md` en la carpeta del pipeline.
 
 ## Convenciones de código
 
@@ -65,7 +78,8 @@ distribuidores al 10/2026).
   Forecast, Locations, ItemForecast (`/item/:sku`), POHistory, ReorderAlerts,
   TransferOrders, OnOrder, DistributorStock, SalesPipeline,
   DistributorScorecard, Backlog (`/backlog?so=`), LeadTimes, Margins, Trends,
-  Serials, SoHistory, Pepsi, Payments, Login, UpdatePassword.
+  Serials (`/serials?q=`), Warranties, SoHistory, Pepsi, Payments, Login,
+  UpdatePassword.
 - Mensajes de commit en español, al grano (mirar `git log`).
 
 ## Reglas de trabajo con Claude
@@ -82,6 +96,11 @@ distribuidores al 10/2026).
 
 ## Historia reciente (resumen de contexto)
 
+- 10/2026: garantías / service plans. Fuente nueva en el pipeline
+  (`bajar_warranties` → `warranties` / `warranty_serials`), página
+  `/warranties` (por cliente final, por cobertura y por equipo) y badge de
+  cobertura en Serials y SO History. Pendiente: correr `SQL_warranties.sql` en
+  Supabase.
 - 10/2026: branding nuevo (marca y wordmark oficiales 2026) en sidebar, login,
   update-password y favicon.
 - 10/2026: Dashboard y reorder alerts pasados de on-hand a available

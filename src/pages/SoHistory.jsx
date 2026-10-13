@@ -6,6 +6,8 @@ import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
+import { WarrantyBadge } from '../components/WarrantyBadge';
+import { estadoGarantia } from '../utils/warranty';
 import { formatCurrency, isValidSku } from '../utils/coverage';
 
 // Historial de sales orders (18 meses, cerradas incluidas) enfocado en el
@@ -87,7 +89,21 @@ async function fetchSoHistory() {
     }
   } catch { /* sin location todavía */ }
 
-  return { historia, pagadoPorSo, trackBySo, descBySku, whBySo, hayCostos: costos.length > 0 };
+  // Coberturas de service plan por orden (tabla `warranties`, del pipeline).
+  // Sirve para marcar en la lista qué órdenes llevaron plan y quién es el
+  // cliente FINAL, que acá no se sabe: so_history.customer es a quién se le
+  // facturó, casi siempre el distribuidor.
+  const garantiasBySo = new Map();
+  try {
+    const planes = await paginado(() => supabase.from('warranties').select('*'));
+    for (const w of planes) {
+      if (!garantiasBySo.has(w.so_number)) garantiasBySo.set(w.so_number, []);
+      garantiasBySo.get(w.so_number).push(w);
+    }
+  } catch { /* sin SQL_warranties.sql todavía */ }
+
+  return { historia, pagadoPorSo, trackBySo, descBySku, whBySo, garantiasBySo,
+           hayCostos: costos.length > 0 };
 }
 
 // Nombres cortos de depósito para la tabla
@@ -137,12 +153,35 @@ function Chevron({ open }) {
   );
 }
 
-function DetalleSo({ so, descBySku }) {
+function DetalleSo({ so, descBySku, garantias = [] }) {
   const { data, loading } = useQuery(() => fetchDetalleSo(so), [so]);
   if (loading) return <p className="px-6 py-3 text-xs font-mono text-muted">Loading order detail…</p>;
   const nombre = sku => (descBySku[sku] ? `${sku} — ${descBySku[sku]}` : sku);
   return (
     <div className="px-6 py-3 space-y-3">
+      {garantias.length > 0 && (
+        <div>
+          <p className="text-[9px] text-muted font-sans font-medium uppercase tracking-wider mb-1">
+            Warranty / service plan
+          </p>
+          <div className="space-y-1">
+            {garantias.map((w, i) => (
+              <div key={i} className="flex items-center gap-2 flex-wrap">
+                <WarrantyBadge w={w} />
+                <span className="font-mono text-[11px] text-slate-300">{w.sku}</span>
+                <span className="font-mono text-[11px] text-muted">
+                  {w.qty} u · {w.plan_years}y · {w.start_date} → {w.end_date}
+                </span>
+                <span className="font-sans text-[11px] text-slate-300">
+                  {w.end_customer
+                    ? `end customer: ${w.end_customer}`
+                    : <span className="text-muted">end customer not recorded</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {data?.lines === null ? (
         <p className="text-xs font-mono text-muted">
           Line detail not loaded yet — run SQL_so_lines.sql in Supabase plus one pipeline run.
@@ -220,6 +259,18 @@ export function SoHistory() {
         pagado: data.pagadoPorSo.get(r.so_number) ?? null,
         tracking: data.trackBySo.get(r.so_number) ?? [],
         warehouses: [...(data.whBySo.get(r.so_number) ?? [])].map(warehouseCorto),
+        garantias: data.garantiasBySo?.get(r.so_number) ?? [],
+      }))
+      .map(r => ({
+        ...r,
+        // La que vence primero entre las vigentes; si están todas vencidas, la
+        // última en vencer (es la que describe mejor el estado de la orden).
+        cobertura: r.garantias.length
+          ? r.garantias.filter(w => estadoGarantia(w.end_date) !== 'expired')
+              .sort((a, b) => (a.end_date < b.end_date ? -1 : 1))[0]
+            ?? r.garantias.reduce((a, b) => (a.end_date >= b.end_date ? a : b))
+          : null,
+        clienteFinal: r.garantias.map(w => (w.end_customer ?? '').trim()).find(Boolean) ?? null,
       }))
       .filter(r => {
         if (soloConEnvio && !(r.shipping_charged > 0) && r.pagado == null) return false;
@@ -227,6 +278,7 @@ export function SoHistory() {
           || r.so_number?.toLowerCase().includes(q)
           || r.customer?.toLowerCase().includes(q)
           || r.status?.toLowerCase().includes(q)
+          || r.clienteFinal?.toLowerCase().includes(q)
           || r.warehouses.some(w => w?.toLowerCase().includes(q))
           || r.tracking.some(t => t.tracking?.toLowerCase().includes(q));
       });
@@ -256,10 +308,13 @@ export function SoHistory() {
         'Shipping Diff': r.pagado != null ? (r.shipping_charged ?? 0) - r.pagado : '',
         'Warehouse': r.warehouses.join(' + '),
         'Tracking': r.tracking.map(t => t.tracking).join(', '),
+        'End Customer': r.clienteFinal ?? '',
+        'Warranty End': r.cobertura?.end_date ?? '',
       }));
       const ws = XLSX.utils.json_to_sheet(datos);
       ws['!cols'] = [{ wch: 12 }, { wch: 11 }, { wch: 32 }, { wch: 20 },
-                     { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }];
+                     { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
+                     { wch: 16 }, { wch: 22 }, { wch: 28 }, { wch: 12 }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'SO History');
       XLSX.writeFile(wb, `so_history_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -333,11 +388,18 @@ export function SoHistory() {
                   className="w-full text-left px-4 pt-3 pb-2.5 active:bg-white/[0.04] transition-colors select-none"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-white text-[13px] font-medium">{r.so_number}</span>
+                    <span className="font-mono text-white text-[13px] font-medium">
+                      {r.so_number}
+                      {r.cobertura && (
+                        <span className="ml-1.5 align-middle"><WarrantyBadge w={r.cobertura} compact /></span>
+                      )}
+                    </span>
                     <StatusBadge status={r.status} />
                   </div>
                   <div className="mt-1 flex items-center justify-between gap-3">
-                    <span className="font-sans text-slate-300 text-xs truncate">{r.customer}</span>
+                    <span className="font-sans text-slate-300 text-xs truncate">
+                      {r.clienteFinal ? `${r.clienteFinal} · via ${r.customer}` : r.customer}
+                    </span>
                     <span className="font-mono text-muted text-[11px] whitespace-nowrap shrink-0">
                       {r.warehouses.length ? `${r.warehouses.join('+')} · ` : ''}{r.so_date}
                     </span>
@@ -371,7 +433,7 @@ export function SoHistory() {
                         </div>
                       </div>
                     )}
-                    <DetalleSo so={r.so_number} descBySku={data.descBySku} />
+                    <DetalleSo so={r.so_number} descBySku={data.descBySku} garantias={r.garantias} />
                   </div>
                 )}
               </div>
@@ -406,15 +468,25 @@ export function SoHistory() {
                   const open = abiertas.has(r.so_number);
                   return (
                     <FragmentoFila key={r.so_number} open={open}
-                      detalle={<DetalleSo so={r.so_number} descBySku={data.descBySku} />}>
+                      detalle={<DetalleSo so={r.so_number} descBySku={data.descBySku} garantias={r.garantias} />}>
                     <tr onClick={() => toggle(r.so_number)}
                       className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors cursor-pointer select-none">
                       <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">
                         <span className="text-muted mr-1.5"><Chevron open={open} /></span>
                         {r.so_number}
+                        {r.cobertura && (
+                          <span className="ml-1.5 align-middle"><WarrantyBadge w={r.cobertura} compact /></span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{r.so_date}</td>
-                      <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[260px] truncate" title={r.customer}>{r.customer}</td>
+                      <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[260px] truncate" title={r.customer}>
+                        {r.customer}
+                        {r.clienteFinal && (
+                          <p className="text-[10px] text-muted truncate" title={`End customer: ${r.clienteFinal}`}>
+                            end customer: {r.clienteFinal}
+                          </p>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
                         {r.warehouses.length ? r.warehouses.join(' + ') : <span className="text-muted">—</span>}
                       </td>

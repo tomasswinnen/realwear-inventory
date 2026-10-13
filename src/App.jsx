@@ -23,6 +23,7 @@ const LeadTimes = lazy(() => import('./pages/LeadTimes').then(m => ({ default: m
 const Margins = lazy(() => import('./pages/Margins').then(m => ({ default: m.Margins })));
 const Trends = lazy(() => import('./pages/Trends').then(m => ({ default: m.Trends })));
 const Serials = lazy(() => import('./pages/Serials').then(m => ({ default: m.Serials })));
+const Warranties = lazy(() => import('./pages/Warranties').then(m => ({ default: m.Warranties })));
 const SoHistory = lazy(() => import('./pages/SoHistory').then(m => ({ default: m.SoHistory })));
 const Pepsi = lazy(() => import('./pages/Pepsi').then(m => ({ default: m.Pepsi })));
 const Payments = lazy(() => import('./pages/Payments').then(m => ({ default: m.Payments })));
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="margins" element={<Suspense fallback={<PageFallback />}><Margins /></Suspense>} />
             <Route path="trends" element={<Suspense fallback={<PageFallback />}><Trends /></Suspense>} />
             <Route path="serials" element={<Suspense fallback={<PageFallback />}><Serials /></Suspense>} />
+            <Route path="warranties" element={<Suspense fallback={<PageFallback />}><Warranties /></Suspense>} />
             <Route path="so-history" element={<Suspense fallback={<PageFallback />}><SoHistory /></Suspense>} />
             <Route path="pepsi" element={<Suspense fallback={<PageFallback />}><Pepsi /></Suspense>} />
             <Route path="payments" element={<Suspense fallback={<PageFallback />}><Payments /></Suspense>} />
