@@ -144,6 +144,10 @@ export function Warranties() {
       planes: vigPlanes.length,
       finales: new Set(vigPlanes.map(clienteFinal).filter(Boolean)).size,
       sinFinal: vigPlanes.filter(w => !clienteFinal(w)).length,
+      // Equipos cubiertos que NADIE identificó por serial: la diferencia entre
+      // unidades vendidas con plan y seriales listados. Es el tamaño real del
+      // agujero de datos, y conviene tenerlo a la vista.
+      sinSerial: vigPlanes.reduce((s, w) => s + Math.max(0, (w.qty ?? 0) - (w.serial_count ?? 0)), 0),
       porVencer: vigPlanes.filter(w => estadoGarantia(w.end_date) === 'expiring').length,
       equiposPorVencer: vigSer.filter(s => estadoGarantia(s.end_date) === 'expiring').length,
       estimados: vigPlanes.filter(w => w.start_source !== 'sold_date').length,
@@ -171,7 +175,8 @@ export function Warranties() {
       {loading || !v ? <KPISkeleton /> : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <KPICard label="Devices in warranty" value={v.kpi.equipos.toLocaleString()}
-            sub={`${v.kpi.planes} active coverages`} accent />
+            sub={`${v.kpi.planes} active coverages · ${v.kpi.sinSerial.toLocaleString()} more units covered without a serial`}
+            accent />
           <KPICard label="End customers" value={v.kpi.finales.toLocaleString()}
             sub={`${v.kpi.sinFinal} coverages with distributor only`} />
           <KPICard label={`Expiring ≤${DIAS_POR_VENCER}d`} value={v.kpi.porVencer.toLocaleString()}
@@ -234,7 +239,10 @@ export function Warranties() {
             “Billed to” is the account that bought it — usually a distributor; the end
             customer is a field someone fills in by hand, so it is missing on many
             recent orders. A “~” means the start date was estimated from the SO date
-            because no sold date was recorded.
+            because no sold date was recorded. The serial count per coverage is what
+            NetSuite actually lists: it is often lower than the units covered, either
+            because nobody typed them in or because the field is capped at 4000
+            characters on large orders.
           </p>
         </>
       )}
@@ -337,11 +345,17 @@ function TablaCoberturas({ planes }) {
               <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
                 {w.sku} <span className="opacity-60">{w.plan_years}y</span>
               </td>
-              <td className="px-4 py-2.5 font-num text-slate-300">
+              <td className="px-4 py-2.5 font-num text-slate-300 whitespace-nowrap">
                 {w.qty}
-                {w.serial_count > 0 && (
-                  <span className="text-muted text-[10px]"> · {w.serial_count} s/n</span>
-                )}
+                {/* Cuántos de esos equipos están identificados por serial. Casi
+                    nunca es el total: o no los cargaron, o NetSuite cortó el
+                    campo en 4000 caracteres (órdenes grandes). */}
+                <span className={`text-[10px] ml-1 ${w.serial_count < w.qty ? 'text-warning/70' : 'text-muted'}`}
+                  title={w.serial_count < w.qty
+                    ? `${w.serial_count} of ${w.qty} covered devices identified by serial in NetSuite`
+                    : 'every covered device identified by serial'}>
+                  · {w.serial_count} s/n
+                </span>
               </td>
               <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
                 {w.start_date}{w.start_source !== 'sold_date' && <span title="estimated from the SO date">~</span>}
