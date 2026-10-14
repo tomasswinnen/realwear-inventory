@@ -11,6 +11,7 @@ import {
   HOY, DIAS_POR_VENCER, diasHasta, estadoGarantia, nombreCuenta, clienteFinal,
   planLabel,
 } from '../utils/warranty';
+import { fetchSelloutMap, selloutDe, SELLOUT_LABEL, SELLOUT_TITLE } from '../utils/sellout';
 import { REGIONES, regionDe } from '../utils/region';
 
 // Garantías / service plans. Fuente: tablas `warranties` (una fila por línea
@@ -45,12 +46,16 @@ async function fetchWarranties() {
       return null; // tabla ausente
     }
   };
-  const [planes, seriales] = await Promise.all([
+  const [planes, seriales, sellout] = await Promise.all([
     traer('warranties'), traer('warranty_serials'),
+    // Relleno: end customer reportado por el disti en el sell-out, para los
+    // seriales cuya línea de NetSuite no lo tiene.
+    fetchSelloutMap(),
   ]);
   return {
     planes: planes ?? [],
     seriales: seriales ?? [],
+    sellout,
     falta: planes === null,
   };
 }
@@ -85,7 +90,9 @@ async function exportarExcel(planes, seriales) {
     'Serial': s.serial, 'Item': s.sku,
     'Plan': s.plan_sku ?? '', 'Years': s.plan_years ?? '',
     'Region': s.region, 'SO': s.so_number,
-    'End Customer': s.end_customer || '', 'Billed To': s.customer,
+    'End Customer': s.end_customer || '',
+    'End Customer Source': s.end_customer_source === 'sellout' ? 'distributor sell-out report' : (s.end_customer ? 'NetSuite' : ''),
+    'Billed To': s.customer,
     'Warranty Start': s.start_date,
     'Start Estimated': s.start_source === 'so_date' ? 'yes' : '',
     'Warranty End': s.end_date,
@@ -93,7 +100,7 @@ async function exportarExcel(planes, seriales) {
     'Status': estadoGarantia(s.end_date),
   })));
   ws2['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 6 }, { wch: 10 },
-                  { wch: 11 }, { wch: 28 }, { wch: 32 }, { wch: 13 }, { wch: 13 },
+                  { wch: 11 }, { wch: 28 }, { wch: 22 }, { wch: 32 }, { wch: 13 }, { wch: 13 },
                   { wch: 13 }, { wch: 9 }, { wch: 10 }];
   XLSX.utils.book_append_sheet(wb, ws2, 'Devices');
 
@@ -141,13 +148,24 @@ export function Warranties() {
         cand.find(w => w.end_date === s.end_date && w.start_date === s.start_date)
         ?? cand.find(w => w.end_date === s.end_date)
         ?? cand[0] ?? null;
-      return {
+      const fila = {
         ...s,
         region: regionDe(s.customer),
         plan_sku: plan?.sku ?? null,
         plan_years: plan?.plan_years ?? null,
         start_source: plan?.start_source ?? null,
+        end_customer_source: (s.end_customer ?? '').trim() ? 'netsuite' : null,
       };
+      // Sin end customer en NetSuite → el del sell-out del disti, marcado.
+      if (!fila.end_customer_source) {
+        const so = selloutDe(data.sellout, s.serial);
+        if (so?.end_customer) {
+          fila.end_customer = so.end_customer;
+          fila.end_customer_source = 'sellout';
+          fila.sellout_reseller = so.reseller ?? null;
+        }
+      }
+      return fila;
     });
 
     const test = FILTROS[filtro].test;
@@ -240,6 +258,7 @@ export function Warranties() {
       porVencer: vigPlanes.filter(w => estadoGarantia(w.end_date) === 'expiring').length,
       equiposPorVencer: vigSer.filter(s => estadoGarantia(s.end_date) === 'expiring').length,
       estimados: vigPlanes.filter(w => w.start_source === 'so_date').length,
+      rellenados: vigSer.filter(s => s.end_customer_source === 'sellout').length,
     };
     return { planes, seriales, clientes, regiones, kpi, serialesTodos: serialesR };
   }, [data, q, filtro, region]);
@@ -271,7 +290,7 @@ export function Warranties() {
             sub={`${v.kpi.planes} active coverages · ${v.kpi.sinSerial.toLocaleString()} more units covered without a serial`}
             accent />
           <KPICard label="End customers" value={v.kpi.finales.toLocaleString()}
-            sub={`${v.kpi.sinFinal} coverages with distributor only`} />
+            sub={`${v.kpi.sinFinal} coverages with distributor only${v.kpi.rellenados ? ` · ${v.kpi.rellenados} devices named only by sell-out` : ''}`} />
           <KPICard label={`Expiring ≤${DIAS_POR_VENCER}d`} value={v.kpi.porVencer.toLocaleString()}
             sub={`${v.kpi.equiposPorVencer} devices`}
             color={v.kpi.porVencer ? 'text-warning' : undefined} />
@@ -494,9 +513,17 @@ function TablaEquipos({ seriales, q }) {
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
                     <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
-                    <span className="font-sans text-[10px] text-accent/80 truncate max-w-[160px] whitespace-nowrap"
+                    {regs.some(r => r.end_customer_source === 'sellout') && (
+                      <span title={SELLOUT_TITLE}
+                        className="font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap bg-accent/15 text-accent">
+                        {SELLOUT_LABEL}
+                      </span>
+                    )}
+                    <span className="font-sans text-[10px] text-accent/80 truncate max-w-[200px] whitespace-nowrap"
                       title={cuentas.join(', ')}>
-                      {esFinal ? `via ${cuentas.join(', ')}` : 'distributor'}
+                      {esFinal
+                        ? `via ${[...new Set(regs.map(r => r.sellout_reseller).filter(Boolean))].concat(cuentas).join(', ')}`
+                        : 'distributor'}
                     </span>
                     <span className="font-mono text-[10px] text-muted whitespace-nowrap">
                       {regs.length} {regs.length === 1 ? 'device' : 'devices'}

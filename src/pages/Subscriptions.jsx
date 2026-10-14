@@ -10,6 +10,7 @@ import {
   HOY, DIAS_POR_VENCER, diasHasta, estadoGarantia, ESTADO_LABEL, ESTADO_STYLE,
   nombreCuenta,
 } from '../utils/warranty';
+import { fetchSelloutMap, selloutDe, SELLOUT_LABEL, SELLOUT_TITLE } from '../utils/sellout';
 
 // Suscripciones — separadas a propósito de Warranties (garantías):
 //
@@ -29,7 +30,7 @@ async function fetchSubs() {
   const traer = async armar => {
     try { return await paginar(armar); } catch { return null; }
   };
-  const [lp, sw, inv] = await Promise.all([
+  const [lp, sw, inv, sellout] = await Promise.all([
     traer(() => supabase.from('launchpad_subs').select('*')
       .order('end_date', { ascending: false })),
     traer(() => supabase.from('warranties').select('*')
@@ -39,6 +40,8 @@ async function fetchSubs() {
     // el pipeline las baja de las lineas de factura con custcol_order_end_date.
     traer(() => supabase.from('warranties').select('*')
       .eq('start_source', 'invoice').order('end_date', { ascending: false })),
+    // Relleno: el sell-out del disti (reseller + end customer por serial).
+    fetchSelloutMap(),
   ]);
   let invSer = [];
   const facturas = [...new Set((inv ?? []).map(w => w.so_number).filter(Boolean))];
@@ -73,7 +76,7 @@ async function fetchSubs() {
     if (mejor) envios[ev.serial] = ev;
   }
 
-  return { lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, envios, falta: lp === null };
+  return { lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, envios, sellout, falta: lp === null };
 }
 
 // Fila de factura -> misma forma que una fila de Launchpad, para que el
@@ -120,6 +123,7 @@ async function exportarExcel(devices, software) {
     'Subscription end': r.end_date,
     'Days left': Math.max(0, diasHasta(r.end_date) ?? 0),
     'End customer': r.customer,
+    'End customer source': r.customer_source === 'sellout' ? 'distributor sell-out report' : (r.customer ? 'NetSuite / Launchpad' : ''),
     'Serial': r.serial, 'Device': r.device ?? '',
     'Source': (r.sources ?? ['launchpad']).map(s => (s === 'invoice' ? 'NetSuite invoice' : 'Launchpad')).join(' + '),
     'Plan': `${r.plan_years}y (code ${r.plan_code})`,
@@ -130,7 +134,7 @@ async function exportarExcel(devices, software) {
     'Original customer': r.original_customer ?? '', 'Registered': r.submitted,
     'Renewed': r.renovado ? 'yes' : '',
   })));
-  ws1['!cols'] = [{ wch: 14 }, { wch: 9 }, { wch: 32 }, { wch: 19 }, { wch: 12 },
+  ws1['!cols'] = [{ wch: 14 }, { wch: 9 }, { wch: 32 }, { wch: 22 }, { wch: 19 }, { wch: 12 },
                   { wch: 15 }, { wch: 12 }, { wch: 9 }, { wch: 30 }, { wch: 18 },
                   { wch: 18 }, { wch: 28 }, { wch: 28 }, { wch: 12 }, { wch: 8 }];
   XLSX.utils.book_append_sheet(wb, ws1, 'Device subscriptions');
@@ -208,6 +212,21 @@ export function Subscriptions() {
       }
     }
     for (const f of deFactura) if (!vistos.has(f.serial)) pagasTodo.push(f);
+    // Relleno con el sell-out: si ni NetSuite ni Launchpad dicen quién usa el
+    // equipo, vale lo que reportó el distribuidor (end customer y reseller),
+    // marcado como tal. NetSuite/Launchpad siempre ganan cuando tienen dato.
+    let rellenados = 0;
+    for (const r of pagasTodo) {
+      const so = selloutDe(data.sellout, r.serial);
+      if (!so) continue;
+      if (!(r.customer ?? '').trim() && so.end_customer) {
+        r.customer = so.end_customer; r.customer_source = 'sellout'; rellenados += 1;
+      }
+      if (!(r.reseller ?? '').trim() && so.reseller) {
+        r.reseller = so.reseller; r.reseller_source = 'sellout';
+      }
+      if (!r.distributor && so.distributor) r.distributor = so.distributor;
+    }
     const porSerial = new Map();
     for (const r of pagasTodo) porSerial.set(r.serial, (porSerial.get(r.serial) ?? 0) + 1);
     for (const r of pagasTodo) r.renovado = porSerial.get(r.serial) > 1;
@@ -231,6 +250,7 @@ export function Subscriptions() {
       clientes: new Set(vig.map(r => (r.customer ?? '').trim()).filter(Boolean)).size,
       swVig: data.sw.filter(r => estadoGarantia(r.end_date) !== 'expired').length,
       estandar: data.lp.length - pagasTodo.length,
+      rellenados,
     };
     return { devices, software, kpi, pagasTodo };
   }, [data, q, filtro]);
@@ -248,7 +268,7 @@ export function Subscriptions() {
       <div>
         <h1 className="text-xl font-sans font-semibold text-white">Subscriptions</h1>
         <p className="text-xs text-muted font-mono mt-0.5">
-          Paid device subscriptions — registered in Launchpad or invoiced directly in NetSuite — and Device Pro software plans. Big name = who to contact.
+          Paid device subscriptions — registered in Launchpad or invoiced directly in NetSuite — and Device Pro software plans. Big name = who to contact; “per sell-out” = taken from the distributor’s report.
         </p>
       </div>
 
@@ -257,7 +277,7 @@ export function Subscriptions() {
           <KPICard label="Devices subscribed" value={v.kpi.devicesVig.toLocaleString()}
             sub={`${v.kpi.subsVig} active subscriptions`} accent />
           <KPICard label="End customers" value={v.kpi.clientes.toLocaleString()}
-            sub="with an active subscription" />
+            sub={v.kpi.rellenados ? `with an active subscription · ${v.kpi.rellenados} devices named only by sell-out` : 'with an active subscription'} />
           <KPICard label={`Expiring ≤${DIAS_POR_VENCER}d`} value={v.kpi.porVencer.toLocaleString()}
             color={v.kpi.porVencer ? 'text-warning' : undefined}
             sub="renewal window" />
@@ -490,6 +510,9 @@ function TablaDevices({ filas, q }) {
               const rol = (regs[0].customer ?? '').trim() ? 'end customer'
                 : (regs[0].reseller ?? '').trim() ? 'reseller'
                 : (regs[0].distributor && regs[0].distributor !== 'unknown') ? 'distributor' : null;
+              // El nombre vino del reporte del disti, no de NetSuite/Launchpad
+              const deSellout = rol === 'end customer' ? regs.some(r => r.customer_source === 'sellout')
+                : rol === 'reseller' ? regs.some(r => r.reseller_source === 'sellout') : false;
               const facturas = [...new Set(regs.filter(r => (r.sources ?? []).includes('invoice'))
                 .map(r => r.so_number).filter(Boolean))].sort();
               const modelos = [...regs.reduce((m, r) => {
@@ -505,12 +528,14 @@ function TablaDevices({ filas, q }) {
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
                     <span className="font-sans text-white text-sm font-medium truncate max-w-[300px]" title={cliente}>{cliente}</span>
                     {rol && (
-                      <span title={rol === 'end customer' ? 'End customer registered in Launchpad / NetSuite'
+                      <span title={deSellout ? SELLOUT_TITLE
+                          : rol === 'end customer' ? 'End customer registered in Launchpad / NetSuite'
                           : rol === 'reseller' ? 'No end customer recorded: the reseller who registered the devices is the contact'
                           : 'No end customer recorded: the distributor RealWear invoiced is the contact'}
                         className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${
-                          rol === 'end customer' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
-                        {rol}
+                          deSellout ? 'bg-accent/15 text-accent'
+                          : rol === 'end customer' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
+                        {rol}{deSellout ? ` · ${SELLOUT_LABEL}` : ''}
                       </span>
                     )}
                     <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[380px]"

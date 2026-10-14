@@ -5,6 +5,7 @@ import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { KPICard } from '../components/KPICard';
+import { NS_MATCH } from '../utils/sellout';
 
 // Sell-out de distribuidores: lo que cada disti reporta haber vendido, serial
 // por serial, con reseller y cliente final. Fuente: el Excel "Sale Out data"
@@ -22,6 +23,13 @@ async function fetchSellOut() {
   }
 }
 
+const NS_LABEL = {
+  shipped: 'shipped in NetSuite',
+  typo: 'serial not found as written (probable typo)',
+  invoice_only: 'only typed on an invoice, never fulfilled',
+  not_found: 'not in NetSuite at all',
+};
+
 function coincide(r, q) {
   if (!q) return true;
   const t = q.toLowerCase();
@@ -37,9 +45,12 @@ async function exportarExcel(filas) {
     'Date sold': r.date_sold ?? '', 'Country': r.country ?? '', 'Region': r.region ?? '',
     'Program': r.program_ref ?? '', 'Subscription SKU': r.is_subscription_sku ? 'yes' : '',
     'Report received': r.mail_received ?? '',
+    'NetSuite check': NS_LABEL[r.ns_match] ?? '',
+    'NetSuite serial': r.ns_serial ?? '',
   })));
   ws['!cols'] = [{ wch: 22 }, { wch: 26 }, { wch: 30 }, { wch: 19 }, { wch: 9 }, { wch: 30 },
-                 { wch: 5 }, { wch: 11 }, { wch: 14 }, { wch: 7 }, { wch: 16 }, { wch: 8 }, { wch: 12 }];
+                 { wch: 5 }, { wch: 11 }, { wch: 14 }, { wch: 7 }, { wch: 16 }, { wch: 8 }, { wch: 12 },
+                 { wch: 22 }, { wch: 19 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Sell-out devices');
   XLSX.writeFile(wb, `sellout_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -67,6 +78,11 @@ export function SellOut() {
       conEC: todas.filter(r => r.end_customer).length,
       subs: todas.filter(r => r.is_subscription_sku).length,
       ultimo: todas.reduce((m, r) => (r.mail_received > (m ?? '') ? r.mail_received : m), null),
+      // Seriales que el disti reporta pero NetSuite no conoce (lo calcula el pipeline)
+      nsTypo: todas.filter(r => r.ns_match === 'typo').length,
+      nsInvoice: todas.filter(r => r.ns_match === 'invoice_only').length,
+      nsNone: todas.filter(r => r.ns_match === 'not_found').length,
+      nsChecked: todas.some(r => r.ns_match),
     };
     return { filas, regiones, kpi };
   }, [data, q, region]);
@@ -89,7 +105,7 @@ export function SellOut() {
       </div>
 
       {loading || !v ? <KPISkeleton /> : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <KPICard label="Devices sold out" value={v.kpi.total.toLocaleString()}
             sub={`${v.kpi.esteAnio.toLocaleString()} this year`} accent />
           <KPICard label="Distributors reporting" value={v.kpi.distis.toLocaleString()}
@@ -98,6 +114,10 @@ export function SellOut() {
             sub={`${v.kpi.conEC.toLocaleString()} of ${v.kpi.total.toLocaleString()} devices`} />
           <KPICard label="Subscription SKUs" value={v.kpi.subs.toLocaleString()}
             sub="devices sold as subscription (…S)" />
+          <KPICard label="Not matching NetSuite"
+            value={v.kpi.nsChecked ? (v.kpi.nsTypo + v.kpi.nsInvoice + v.kpi.nsNone).toLocaleString() : '—'}
+            color={v.kpi.nsTypo + v.kpi.nsInvoice + v.kpi.nsNone ? 'text-warning' : undefined}
+            sub={v.kpi.nsChecked ? `${v.kpi.nsTypo} typo · ${v.kpi.nsInvoice} invoice only · ${v.kpi.nsNone} unknown` : 'checked on the next pipeline run'} />
         </div>
       )}
 
@@ -138,7 +158,9 @@ export function SellOut() {
         consolidated by Channel Ops in “Sale Out data”; the pipeline reads that file from OneDrive.
         NetSuite only knows which distributor it invoiced — the reseller and end customer behind a
         serial exist only here. A serial reported twice keeps its latest report. “…S” SKUs are
-        devices sold as a subscription.
+        devices sold as a subscription. Each serial is checked against NetSuite by the pipeline:
+        “serial typo?” = NetSuite has one with the same ending; “invoice only” = typed on an invoice
+        but never fulfilled from inventory; “not in NetSuite” = no trace at all.
       </p>
     </div>
   );
@@ -260,6 +282,12 @@ function Agrupado({ filas, q }) {
                           <span className="text-muted"> · {r.sku ?? '?'}</span>
                           {fechas.length > 1 && <span className="text-muted opacity-70"> · {r.date_sold}</span>}
                           {r.is_subscription_sku && <span className="text-accent/80"> ·S</span>}
+                          {NS_MATCH[r.ns_match] && (
+                            <span title={NS_MATCH[r.ns_match].title(r)}
+                              className={`ml-1.5 font-mono text-[9px] px-1 py-px rounded ${NS_MATCH[r.ns_match].cls}`}>
+                              {NS_MATCH[r.ns_match].label}{r.ns_match === 'typo' && r.ns_serial ? ` → ${r.ns_serial}` : ''}
+                            </span>
+                          )}
                         </Link>
                       ))}
                     </div>

@@ -33,7 +33,9 @@ ventana de ~90 días), `shipping_costs`, `freight_invoices`, `monthly_sales`,
 `demand_forecast`, `lead_times`, `sku_margins`, `skus` (catálogo/filtro),
 `distributor_stock` (carga semi-manual desde "Inventory Q*.xlsx", 17
 distribuidores al 10/2026), `warranties` y `warranty_serials` (coberturas de
-service plan; ver regla abajo).
+service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
+`sellout_devices` (sell-out de los distribuidores, con `ns_match`/`ns_serial`
+= cruce contra NetSuite que calcula el pipeline).
 
 ## Reglas de negocio (no romper)
 
@@ -120,6 +122,24 @@ service plan; ver regla abajo).
   lee con `subir_sellout.py` desde la ruta de OneDrive en `sellout_path.txt`
   (o la copia local más nueva). NetSuite NO tiene este dato (records custom
   de channel vacíos o sin permiso API). Serial repetido → último reporte.
+  **El sell-out es RELLENO en el resto del sitio** (`src/utils/sellout.js`,
+  `fetchSelloutMap`/`selloutDe`): Subscriptions, Warranties y Serials usan su
+  end customer (y reseller) SOLO cuando NetSuite/Launchpad no lo tienen, y lo
+  marcan `per sell-out` (badge celeste, columna "source" en los exports).
+  Nunca pisa un dato de NetSuite/Launchpad. Serials además muestra por serial
+  lo que reportó el disti (end customer, reseller, fecha de venta).
+  Cruce 14/10/2026 (SQL en Supabase): de 2.204 seriales del Excel, 1.238 con
+  end customer que el sitio no tenía (Westbase 446, ATG 223, Sysgration 180,
+  ScanSource 94, Barcotec 76…), 1.625 sin ninguna cobertura registrada, 154
+  con end customer distinto al de Launchpad, 11 que NetSuite no despachó.
+  Esos 11: 5 de XR Works e Ingram son typos del disti (letra de más/dígito
+  de menos; NetSuite tiene el serial correcto en IF19815/IF20062/IF20125) y
+  5 de OnVirtu existen SOLO tipeados en la columna "Serial Numbers" de las
+  facturas 22607/22608/23304 (y en Launchpad), sin fulfillment con inventory
+  detail → el equipo salió sin que NetSuite registre el serial. Por eso el
+  pipeline calcula `ns_match` (shipped / typo + `ns_serial` / invoice_only /
+  not_found) y la página Sell-out lo muestra en cada serial + KPI "Not
+  matching NetSuite".
 
 - 16/10/2026: Subscriptions ahora se alimenta SOLO de NetSuite: el record custom
   `customrecord_dv` (Device Registration, el que llena mrSspUpdate/script 3899

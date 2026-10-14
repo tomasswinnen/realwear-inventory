@@ -7,6 +7,7 @@ import { TableSkeleton } from '../components/Skeleton';
 import { isValidSku } from '../utils/coverage';
 import { WarrantyBadge } from '../components/WarrantyBadge';
 import { estadoGarantia, ESTADO_LABEL } from '../utils/warranty';
+import { fetchSelloutMap, selloutDe, SELLOUT_LABEL, SELLOUT_TITLE } from '../utils/sellout';
 
 // Números de serie AGRUPADOS POR ORDEN: una fila por sales order (o por
 // documento, si el evento no vino de una SO), desplegable para ver qué
@@ -64,8 +65,11 @@ async function fetchSerials(q) {
   try {
     garantias = await paginar(() => supabase.from('warranty_serials').select('*'));
   } catch { garantias = []; }
+  // Sell-out del disti: reseller, end customer y fecha de venta por serial.
+  // Es lo que NetSuite no tiene; se muestra marcado "per sell-out".
+  const sellout = await fetchSelloutMap();
 
-  return { rows: filas, skus: skusRes.data ?? [], garantias };
+  return { rows: filas, skus: skusRes.data ?? [], garantias, sellout };
 }
 
 const DOC_LABEL = {
@@ -78,7 +82,7 @@ const DOC_LABEL = {
 // completa si no hay búsqueda (~160k filas, tarda un par de minutos) — y arma
 // un .xlsx de verdad. SheetJS se carga recién acá (import dinámico), así que
 // no infla la página para quien nunca exporta.
-async function exportarExcel(q, descBySku, cobertura, onProgreso) {
+async function exportarExcel(q, descBySku, cobertura, sellout, onProgreso) {
   const XLSX = await import('xlsx');
   const filas = [];
   let conSo = true;
@@ -97,6 +101,7 @@ async function exportarExcel(q, descBySku, cobertura, onProgreso) {
 
   const datos = filas.map(r => {
     const g = cobertura.get(r.serial);
+    const so = selloutDe(sellout, r.serial);
     return {
       'Serial': r.serial,
       'Item': r.sku,
@@ -109,12 +114,15 @@ async function exportarExcel(q, descBySku, cobertura, onProgreso) {
       'End Customer': g?.end_customer ?? '',
       'Warranty End': g?.end_date ?? '',
       'Warranty Status': g ? ESTADO_LABEL[estadoGarantia(g.end_date)] : '',
+      'Sell-out End Customer': so?.end_customer ?? '',
+      'Sell-out Reseller': so?.reseller ?? '',
+      'Sell-out Date': so?.date_sold ?? '',
     };
   });
   const ws = XLSX.utils.json_to_sheet(datos);
   ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 34 }, { wch: 12 },
                  { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 32 },
-                 { wch: 28 }, { wch: 12 }, { wch: 14 }];
+                 { wch: 28 }, { wch: 12 }, { wch: 14 }, { wch: 28 }, { wch: 24 }, { wch: 11 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Serial Numbers');
   const hoy = new Date().toISOString().slice(0, 10);
@@ -181,7 +189,8 @@ export function Serials() {
         });
       }
       const g = porOrden.get(clave);
-      g.seriales.push({ ...s, ultimo, garantia: cobertura.get(s.serial) ?? null });
+      g.seriales.push({ ...s, ultimo, garantia: cobertura.get(s.serial) ?? null,
+                        sellout: selloutDe(data.sellout, s.serial) });
       if (s.sku) g.skus.add(s.sku);
       if (ultimo.fecha > g.fecha) g.fecha = ultimo.fecha;
     }
@@ -195,6 +204,12 @@ export function Serials() {
         : null;
       g.cubiertos = cobs.length;
       g.clienteFinal = cobs.map(c => (c.end_customer ?? '').trim()).find(Boolean) ?? null;
+      g.clienteFinalSource = g.clienteFinal ? 'netsuite' : null;
+      // Sin end customer en NetSuite: el que reportó el disti en el sell-out.
+      if (!g.clienteFinal) {
+        const so = g.seriales.map(s => s.sellout).find(x => x?.end_customer);
+        if (so) { g.clienteFinal = so.end_customer; g.clienteFinalSource = 'sellout'; }
+      }
     }
     const ordenes = [...porOrden.values()]
       .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
@@ -212,7 +227,7 @@ export function Serials() {
     setExportando(0);
     setErrorExport('');
     try {
-      await exportarExcel(q, descBySku, cobertura, setExportando);
+      await exportarExcel(q, descBySku, cobertura, data?.sellout, setExportando);
     } catch (e) {
       setErrorExport(`Export failed: ${e.message}`);
     }
@@ -306,7 +321,8 @@ export function Serials() {
           </div>
           <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
             Each serial inside an order shows both documents: the fulfillment (physical shipment) and the invoice.
-            Search hits serial, sales order, customer, document number and SKU.
+            Search hits serial, sales order, customer, document number and SKU. “Sell-out” is what the distributor
+            reported for that serial (end customer, reseller, date sold) — not in NetSuite.
           </p>
         </div>
         </>
@@ -340,7 +356,9 @@ function OrdenCard({ g, descBySku, open, onToggle }) {
           <div className="mt-1.5 flex items-center gap-2 min-w-0">
             {g.cobertura && <WarrantyBadge w={g.cobertura} />}
             {g.clienteFinal && (
-              <span className="font-sans text-[10px] text-muted truncate">{g.clienteFinal}</span>
+              <span className="font-sans text-[10px] text-muted truncate">
+                {g.clienteFinal}{g.clienteFinalSource === 'sellout' ? ` · ${SELLOUT_LABEL}` : ''}
+              </span>
             )}
           </div>
         )}
@@ -357,6 +375,12 @@ function OrdenCard({ g, descBySku, open, onToggle }) {
                 <p className="font-sans text-muted text-[10px] truncate">
                   {descBySku[s.sku] ? `${s.sku} — ${descBySku[s.sku]}` : s.sku}
                 </p>
+                {s.sellout && (
+                  <p className="font-sans text-[10px] text-slate-300 truncate" title={SELLOUT_TITLE}>
+                    {s.sellout.end_customer ?? '—'}{s.sellout.reseller ? ` via ${s.sellout.reseller}` : ''}
+                    <span className="text-accent/80"> · {SELLOUT_LABEL}</span>
+                  </p>
+                )}
               </div>
               <div className="text-right shrink-0">
                 {s.eventos.map((ev, i) => (
@@ -393,8 +417,10 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
         <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[240px] truncate" title={g.cliente}>
           {g.cliente ?? '—'}
           {g.clienteFinal && (
-            <p className="text-[10px] text-muted truncate" title={`End customer: ${g.clienteFinal}`}>
+            <p className="text-[10px] text-muted truncate"
+              title={g.clienteFinalSource === 'sellout' ? `End customer ${SELLOUT_LABEL}: ${g.clienteFinal}. ${SELLOUT_TITLE}` : `End customer: ${g.clienteFinal}`}>
               end customer: {g.clienteFinal}
+              {g.clienteFinalSource === 'sellout' && <span className="text-accent/80"> · {SELLOUT_LABEL}</span>}
             </p>
           )}
         </td>
@@ -423,7 +449,7 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
             <table className="w-full text-xs">
               <thead>
                 <tr>
-                  {['Serial', 'SKU', 'Documents', 'Warranty'].map(h => (
+                  {['Serial', 'SKU', 'Documents', 'Warranty', 'Sell-out (distributor report)'].map(h => (
                     <th key={h} className="px-3 py-1.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[9px]">{h}</th>
                   ))}
                 </tr>
@@ -465,6 +491,18 @@ function OrdenRow({ g, descBySku, open, onToggle }) {
                           )}
                         </>
                       ) : <span className="text-[10px] font-mono text-muted">no plan on record</span>}
+                    </td>
+                    <td className="px-3 py-1.5 max-w-[260px]" title={s.sellout ? SELLOUT_TITLE : 'The distributor has not reported this serial as sold (not in the sell-out Excel)'}>
+                      {s.sellout ? (
+                        <>
+                          <p className="font-sans text-[11px] text-slate-300 truncate">
+                            {s.sellout.end_customer ?? <span className="text-muted italic">end customer not reported</span>}
+                          </p>
+                          <p className="text-[10px] font-mono text-muted truncate">
+                            {s.sellout.reseller ? `via ${s.sellout.reseller}` : ''}{s.sellout.reseller && s.sellout.date_sold ? ' · ' : ''}{s.sellout.date_sold ? `sold ${s.sellout.date_sold}` : ''}
+                          </p>
+                        </>
+                      ) : <span className="text-[10px] font-mono text-muted">not reported</span>}
                     </td>
                   </tr>
                 ))}
