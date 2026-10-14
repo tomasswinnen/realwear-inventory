@@ -11,6 +11,10 @@ import {
   nombreCuenta,
 } from '../utils/warranty';
 import { fetchSelloutMap, selloutDe, SELLOUT_LABEL, SELLOUT_TITLE } from '../utils/sellout';
+import {
+  segLabel, normSerial, seguimientoDe, resumenSeguimiento, guardarSeguimiento,
+  descargarCSV, SeguimientoPill, SeguimientoFiltro, SeguimientoEditor,
+} from '../components/FollowUp';
 
 // Subscriptions = herramienta de SEGUIMIENTO de renovaciones de suscripciones
 // pagas de device (y Device Pro, software). La unidad de trabajo es el
@@ -97,7 +101,7 @@ function filaDesdeFactura(s, planPorFactura) {
   };
 }
 
-const norm = s => (s ?? '').trim().toUpperCase();
+const norm = normSerial;
 const mismo = (a, b) => (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
 const uniq = xs => [...new Set(xs.filter(Boolean))];
 
@@ -124,16 +128,6 @@ const VISTAS = {
   all: { label: 'All', test: () => true },
 };
 
-// Estados de seguimiento (lo que el equipo marca a mano).
-const SEGUIMIENTO = {
-  open: { label: 'Not contacted', cls: 'bg-white/[0.07] text-slate-300' },
-  contacted: { label: 'Contacted', cls: 'bg-accent/15 text-accent' },
-  quoted: { label: 'Quote sent', cls: 'bg-accent/25 text-white' },
-  renewed: { label: 'Renewed', cls: 'bg-success/15 text-success' },
-  lost: { label: 'Lost', cls: 'bg-danger/15 text-danger' },
-};
-const segLabel = s => SEGUIMIENTO[s]?.label ?? (s === 'mixed' ? 'Mixed' : s);
-
 // Nombre del contrato = a quién llamar: end customer; si no hay, reseller;
 // si no, distributor.
 export function nombreGrupo(r) {
@@ -155,9 +149,6 @@ function armarContrato(c) {
     : (r0.distributor && r0.distributor !== 'unknown') ? 'distributor' : null;
   const deSellout = rol === 'end customer' ? regs.some(r => r.customer_source === 'sellout')
     : rol === 'reseller' ? regs.some(r => r.reseller_source === 'sellout') : false;
-  const estadosFu = uniq(regs.map(r => r.fu?.status ?? 'open'));
-  const ultimo = regs.map(r => r.fu).filter(Boolean)
-    .sort((a, b) => ((a.updated_at ?? '') < (b.updated_at ?? '') ? 1 : -1))[0] ?? null;
   const modelos = [...regs.reduce((m, r) => {
     const d = r.device ?? '?';
     m.set(d, (m.get(d) ?? 0) + 1);
@@ -188,10 +179,7 @@ function armarContrato(c) {
     renovados: regs.filter(r => r.renovado).length,
     noReportados: regs.filter(r => r.noReportado).length,
     mismatches: regs.filter(r => r.mismatch),
-    seguimiento: estadosFu.length === 1 ? estadosFu[0] : 'mixed',
-    nota: ultimo?.note ?? '',
-    fuBy: ultimo?.updated_by ?? null,
-    fuAt: ultimo?.updated_at ?? null,
+    ...resumenSeguimiento(regs),
   };
 }
 
@@ -246,20 +234,6 @@ function filaContrato(c) {
     'Data gaps': banderas(c).join('; '),
     'Contract ID': c.id,
   };
-}
-
-function descargarCSV(filas, nombre) {
-  const cols = Object.keys(filas[0] ?? { 'No contracts': '' });
-  const esc = v => {
-    const s = String(v ?? '');
-    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const txt = [cols.map(esc).join(','), ...filas.map(f => cols.map(c => esc(f[c])).join(','))].join('\r\n');
-  const url = URL.createObjectURL(new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' }));
-  const a = document.createElement('a');
-  a.href = url; a.download = nombre;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 async function exportarExcel(contratos, software) {
@@ -412,8 +386,7 @@ export function Subscriptions() {
       r.noReportado = (r.sources ?? []).includes('invoice') && !so && (e === 'renew' || e === 'active');
       r.mismatch = Boolean(so?.end_customer && r.customer && r.customer_source !== 'sellout'
         && !mismo(so.end_customer, r.customer));
-      const f = fuPor.get(norm(r.serial));
-      r.fu = f && f.end_date === r.end_date ? f : null;
+      r.fu = seguimientoDe(fuPor, r.serial, r.end_date);
     }
     const veces = new Map();
     for (const r of filas) veces.set(r.serial, (veces.get(r.serial) ?? 0) + 1);
@@ -483,20 +456,7 @@ export function Subscriptions() {
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
   const guardar = async (c, estado, nota) => {
-    const { data: u } = await supabase.auth.getUser();
-    const by = u?.user?.email ?? null;
-    const ahora = new Date().toISOString();
-    const porSerial = new Map();
-    for (const r of c.regs) {
-      porSerial.set(norm(r.serial), {
-        serial: r.serial, end_date: r.end_date, status: estado,
-        note: nota || null, updated_by: by, updated_at: ahora,
-      });
-    }
-    const filas = [...porSerial.values()];
-    const { error: err } = await supabase.from('subscription_followup')
-      .upsert(filas, { onConflict: 'serial' });
-    if (err) throw new Error(err.message);
+    const filas = await guardarSeguimiento('subscription_followup', c.regs, estado, nota);
     setFuLocal(prev => {
       const n = new Map(prev);
       for (const f of filas) n.set(norm(f.serial), f);
@@ -589,16 +549,7 @@ export function Subscriptions() {
               onChange={e => setQ(e.target.value)}
               className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-80"
             />
-            <span className="text-[10px] font-mono text-muted uppercase tracking-wider">Follow-up</span>
-            {[['any', 'Any'], ...Object.entries(SEGUIMIENTO).map(([k, s]) => [k, s.label]), ['mixed', 'Mixed']]
-              .filter(([k]) => k === 'any' || (v?.conteoSeg[k] ?? 0) > 0 || seg === k)
-              .map(([k, label]) => (
-                <button key={k} onClick={() => setSeg(k)}
-                  className={`px-2 py-1 rounded text-[10px] font-mono transition-colors ${
-                    seg === k ? (SEGUIMIENTO[k]?.cls ?? 'bg-accent/15 text-accent') : 'text-muted hover:text-white'}`}>
-                  {label}{v ? <span className="opacity-60"> · {v.conteoSeg[k] ?? 0}</span> : null}
-                </button>
-              ))}
+            <SeguimientoFiltro seg={seg} setSeg={setSeg} conteo={v?.conteoSeg} />
             {q && v?.fuera > 0 && (
               <button onClick={() => { setFiltro('all'); setSeg('any'); }}
                 className="text-[10px] font-mono text-warning underline underline-offset-2">
@@ -760,10 +711,7 @@ function FilaContrato({ c, abierto, onToggle, onGuardar, sinTabla }) {
             {c.rol}{c.deSellout ? ` · ${SELLOUT_LABEL}` : ''}
           </span>
         )}
-        <span title={c.fuAt ? `${segLabel(c.seguimiento)} — ${c.fuBy ?? '?'} · ${c.fuAt.slice(0, 10)}${c.nota ? `\n${c.nota}` : ''}` : 'No follow-up yet'}
-          className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${SEGUIMIENTO[c.seguimiento]?.cls ?? 'bg-white/[0.07] text-slate-300'}`}>
-          {segLabel(c.seguimiento)}
-        </span>
+<SeguimientoPill c={c} />
         <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[340px] text-muted"
           title={`Reseller: ${c.resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear): ${c.distribuidores.join(', ') || 'unknown'}${c.originales.length ? `\nOriginal customer: ${c.originales.join(', ')}` : ''}${c.sos.length ? `\nNetSuite SO / invoice: ${c.sos.join(', ')}` : ''}`}>
           {c.fuentes.map(f => (
@@ -803,7 +751,7 @@ function FilaContrato({ c, abierto, onToggle, onGuardar, sinTabla }) {
               {gaps.map(b => <li key={b}>· {b}</li>)}
             </ul>
           )}
-          <Seguimiento key={`${c.key}|${c.fuAt ?? ''}|${c.seguimiento}`} c={c} onGuardar={onGuardar} sinTabla={sinTabla} />
+          <SeguimientoEditor key={`${c.key}|${c.fuAt ?? ''}|${c.seguimiento}`} c={c} onGuardar={onGuardar} sinTabla={sinTabla} />
           <div className="flex flex-wrap gap-1.5 px-4 pl-10">
             {c.regs.map(r => (
               <Link key={`${r.id}-${r.end_date}`} to={`/serials?q=${r.serial}`}
@@ -823,47 +771,6 @@ function FilaContrato({ c, abierto, onToggle, onGuardar, sinTabla }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Editor de seguimiento de un contrato: estado + nota, guarda para todos sus
-// seriales. Queda registrado quién y cuándo.
-function Seguimiento({ c, onGuardar, sinTabla }) {
-  const inicial = c.seguimiento === 'mixed' ? 'open' : c.seguimiento;
-  const [estado, setEstado] = useState(inicial);
-  const [nota, setNota] = useState(c.nota ?? '');
-  const [guardando, setGuardando] = useState(false);
-  const [err, setErr] = useState('');
-  const cambiado = estado !== c.seguimiento || nota.trim() !== (c.nota ?? '');
-  const guardar = async () => {
-    setGuardando(true); setErr('');
-    try { await onGuardar(c, estado, nota.trim()); } catch (e) { setErr(e.message); setGuardando(false); }
-  };
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap px-4 pl-10 pb-2">
-      <span className="text-[10px] font-mono text-muted uppercase tracking-wider mr-1">Follow-up</span>
-      {Object.entries(SEGUIMIENTO).map(([k, s]) => (
-        <button key={k} onClick={() => setEstado(k)} disabled={sinTabla}
-          className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors disabled:opacity-40 ${
-            estado === k ? `${s.cls} ring-1 ring-white/20` : 'text-muted hover:text-white'}`}>
-          {s.label}
-        </button>
-      ))}
-      <input value={nota} onChange={e => setNota(e.target.value)} maxLength={300} disabled={sinTabla}
-        onKeyDown={e => { if (e.key === 'Enter' && cambiado && !guardando) guardar(); }}
-        placeholder="Note — who you talked to, quote #, next step…"
-        className="flex-1 min-w-[220px] bg-white/[0.03] border border-white/[0.1] rounded px-2 py-1 text-[11px] font-sans text-white placeholder:text-muted focus:outline-none focus:border-accent/50 disabled:opacity-40" />
-      <button onClick={guardar} disabled={!cambiado || guardando || sinTabla}
-        className="px-2.5 py-1 rounded bg-accent text-white text-[10px] font-mono hover:bg-accent/80 disabled:opacity-30 transition-colors">
-        {guardando ? 'Saving…' : 'Save'}
-      </button>
-      {c.fuAt && (
-        <span className="text-[10px] font-mono text-muted">
-          last update {c.fuBy ?? '?'} · {c.fuAt.slice(0, 10)}{c.seguimiento === 'mixed' ? ' · devices have different statuses' : ''}
-        </span>
-      )}
-      {err && <span className="text-[10px] font-mono text-danger">Not saved: {err}</span>}
     </div>
   );
 }
