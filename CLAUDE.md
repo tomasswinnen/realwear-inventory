@@ -159,6 +159,18 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
 
+- 14/10/2026: página **Overview** (`/overview`, arriba del menú) para
+  presentar el sitio al equipo (viernes 16/10) en 30 segundos. Todo en vivo:
+  titular antes/después, 4 números (registros de serial buscables, equipos
+  con cobertura viva + % de suscripciones con end customer, renovaciones
+  ≤90d + cuántas con seguimiento, end customers recuperados del sell-out),
+  diagrama fuentes → sitio → acciones, 4 hallazgos (suscripciones corriendo
+  sin cliente, vendidos sin cobertura, seriales que no cierran con NetSuite,
+  cliente distinto Launchpad vs sell-out), gráfico de vencimientos y un
+  buscador "Try it" que con un serial muestra envío, a quién lo vendió el
+  disti, end customer y cobertura. Probado en build local con datos de
+  prueba (desktop y celular).
+
 - 14/10/2026: gráfico de vencimientos (`ExpiryChart`, Subscriptions y
   Warranties) muestra SOLO lo que viene: desde el mes actual, meses corridos
   hasta 24 (lo posterior suma en una barra "later"), ancho completo, número

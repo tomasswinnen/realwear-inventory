@@ -9,6 +9,7 @@ import { Icon } from './icons';
 const NAV_SECTIONS = [
   { section: null, items: [
     { to: '/',            label: 'Dashboard',       icon: 'dashboard' },
+    { to: '/overview',    label: 'Overview',        icon: 'flag' },
   ]},
   { section: 'Planning', items: [
     { to: '/forecast',    label: 'Demand Forecast', icon: 'forecast' },
