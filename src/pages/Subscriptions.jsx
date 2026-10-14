@@ -46,7 +46,34 @@ async function fetchSubs() {
     invSer = (await traer(() => supabase.from('warranty_serials').select('*')
       .in('so_number', facturas))) ?? [];
   }
-  return { lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, falta: lp === null };
+
+  // Distribuidor de cada device de Launchpad: a quién le facturó RealWear ese
+  // serial (serial_shipments.cliente). Launchpad no lo sabe — su "reseller" es
+  // quien registró el equipo, que muchas veces es RealWear mismo — y sin esto
+  // la fila decía "distributor unknown" aunque el dato estuviera en la base.
+  // Lotes de 100: el IN de PostgREST va en la URL y tiene tope de largo.
+  const seriales = [...new Set((lp ?? [])
+    .filter(r => r.plan_code !== 'SSP-STANDARD')
+    .map(r => r.serial).filter(Boolean))];
+  const envios = {};
+  const lotes = [];
+  for (let i = 0; i < seriales.length; i += 100) lotes.push(seriales.slice(i, i + 100));
+  const eventos = await Promise.all(lotes.map(lote =>
+    traer(() => supabase.from('serial_shipments')
+      .select('serial, cliente, so_number, fecha, doc_type')
+      .in('serial', lote))));
+  for (const ev of eventos.flat()) {
+    if (!ev?.cliente) continue;
+    // Se queda el evento más reciente; a igual fecha gana el fulfillment,
+    // que es el que lleva la SO.
+    const prev = envios[ev.serial];
+    const mejor = !prev
+      || ev.fecha > prev.fecha
+      || (ev.fecha === prev.fecha && ev.doc_type === 'ItemShip' && prev.doc_type !== 'ItemShip');
+    if (mejor) envios[ev.serial] = ev;
+  }
+
+  return { lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, envios, falta: lp === null };
 }
 
 // Fila de factura -> misma forma que una fila de Launchpad, para que el
@@ -145,7 +172,17 @@ export function Subscriptions() {
     // de NetSuite. Un serial en las dos fuentes es UNA fila: queda la fecha de
     // fin mas tardia y se marcan ambas fuentes.
     const lpPagas = data.lp.filter(r => r.plan_code !== 'SSP-STANDARD')
-      .map(r => ({ ...r, sources: ['launchpad'] }));
+      .map(r => {
+        const env = data.envios?.[r.serial];
+        return {
+          ...r,
+          sources: ['launchpad'],
+          // Distribuidor y SO desde el envío del serial (NetSuite). Si el
+          // serial nunca se despachó desde acá, queda sin dato — no se inventa.
+          distributor: r.distributor || (env ? nombreCuenta(env.cliente) : null),
+          so_number: r.so_number || env?.so_number || null,
+        };
+      });
     const planPorFactura = new Map(data.inv.map(w => [w.so_number, w]));
     const deFactura = data.invSer.map(s => filaDesdeFactura(s, planPorFactura));
     const porSerialFact = new Map(deFactura.map(r => [r.serial, r]));
