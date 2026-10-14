@@ -313,6 +313,16 @@ function TablaDevices({ filas }) {
               const ventas = [...new Set(regs.map(r => r.date_of_sale))].sort();
               const planes = [...new Set(regs.map(r => `${r.plan_years}y`))];
               const resellers = [...new Set(regs.map(r => r.reseller).filter(Boolean))];
+              const registros = [...new Set(regs.map(r => r.submitted).filter(Boolean))].sort();
+              const emails = [...new Set(regs.map(r => r.customer_email).filter(Boolean))];
+              const workspaces = [...new Set(regs.map(r => r.customer_workspace).filter(Boolean))];
+              const renovados = regs.filter(r => r.renovado).length;
+              const modelos = [...regs.reduce((m, r) => {
+                const d = r.device ?? '?';
+                m.set(d, (m.get(d) ?? 0) + 1);
+                return m;
+              }, new Map()).entries()].sort((a, b) => b[1] - a[1])
+                .map(([d, n]) => (n > 1 ? `${d} ×${n}` : d));
               return (
                 <div key={k} className="border-b border-white/[0.04] last:border-b-0">
                   <button onClick={() => alternar(k)}
@@ -321,11 +331,25 @@ function TablaDevices({ filas }) {
                     <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
                     <span className="font-mono text-[10px] text-muted whitespace-nowrap">
                       {regs.length} {regs.length === 1 ? 'device' : 'devices'} · plan {planes.join('/')}
-                      {' · sold '}{ventas[0]}{ventas.length > 1 ? ` … ${ventas[ventas.length - 1]}` : ''}
+                      {' · '}
+                      <span className="text-slate-300">start {ventas[0]}{ventas.length > 1 ? ` … ${ventas[ventas.length - 1]}` : ''}</span>
+                    </span>
+                    <span className="font-mono text-[10px] text-muted truncate max-w-[220px] hidden lg:inline"
+                      title={modelos.join(', ')}>
+                      {modelos.slice(0, 3).join(' · ')}{modelos.length > 3 ? ` +${modelos.length - 3}` : ''}
                     </span>
                     <span className="ml-auto font-sans text-[10px] text-muted truncate max-w-[180px]"
                       title={resellers.join(', ')}>via {resellers.join(', ') || '—'}</span>
                   </button>
+                  {abierto && (
+                    <p className="px-4 pl-10 pb-1.5 text-[10px] font-mono text-muted truncate"
+                      title={`${emails.join(', ')}${workspaces.length ? ` · workspace ${workspaces.join(', ')}` : ''}`}>
+                      {emails[0] ?? 'no contact email'}
+                      {workspaces.length > 0 && ` · workspace ${workspaces[0]}`}
+                      {` · registered ${registros[0] ?? '—'}${registros.length > 1 ? ` … ${registros[registros.length - 1]}` : ''}`}
+                      {renovados > 0 && ` · ${renovados} renewed`}
+                    </p>
+                  )}
                   {abierto && (
                     <div className="flex flex-wrap gap-1.5 px-4 pb-2.5 pl-10">
                       {regs.map(r => (
@@ -334,6 +358,7 @@ function TablaDevices({ filas }) {
                           className="font-mono text-[11px] px-2 py-0.5 rounded bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08] transition-colors">
                           {r.serial}
                           <span className="text-muted"> · {r.device ?? '?'}</span>
+                          {ventas.length > 1 && <span className="text-muted opacity-70"> · {r.date_of_sale}</span>}
                           {r.renovado && <span className="text-accent/80"> ·R</span>}
                         </Link>
                       ))}
