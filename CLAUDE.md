@@ -107,6 +107,14 @@ service plan; ver regla abajo).
 
 ## Historia reciente (resumen de contexto)
 
+- 16/10/2026: página Sell-out (`/sell-out`, tabla `sellout_devices`): lo que
+  los distribuidores reportan haber vendido, serial por serial, con reseller y
+  end customer. Fuente = Excel "Sale Out data 26.xlsx" de Channel Ops
+  (consolidado a mano desde los mails a channel@realwear.com); el pipeline lo
+  lee con `subir_sellout.py` desde la ruta de OneDrive en `sellout_path.txt`
+  (o la copia local más nueva). NetSuite NO tiene este dato (records custom
+  de channel vacíos o sin permiso API). Serial repetido → último reporte.
+
 - 16/10/2026: Subscriptions ahora se alimenta SOLO de NetSuite: el record custom
   `customrecord_dv` (Device Registration, el que llena mrSspUpdate/script 3899
   con los registros de Launchpad) se baja en cada corrida como

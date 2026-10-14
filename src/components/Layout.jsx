@@ -34,6 +34,7 @@ const NAV_SECTIONS = [
     { to: '/margins',     label: 'Margins',         icon: 'percent' },
     { to: '/distributor-stock', label: 'Distributor Stock', icon: 'store' },
     { to: '/distributor-scorecard', label: 'Distributor Scorecard', icon: 'calc' },
+    { to: '/sell-out',    label: 'Sell-out',        icon: 'store' },
   ]},
   { section: 'Support', items: [
     { to: '/serials',     label: 'Serial Numbers',  icon: 'hash' },
