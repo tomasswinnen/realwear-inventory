@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase, paginar } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
@@ -386,66 +386,129 @@ function Encabezados({ cols }) {
   );
 }
 
-// ── Por equipo: una fila por serial, con fechas exactas y el plan ──────────
+// ── Por equipo: agrupado por SO + cobertura, expandible serial por serial ──
+// Las órdenes grandes traen decenas de seriales con el mismo plan y las
+// mismas fechas: agrupados ocupan UNA fila, y el botón las expande para ver
+// cada serial. Un grupo de 1 se muestra directo como fila simple.
 function TablaEquipos({ seriales }) {
+  const [abiertos, setAbiertos] = useState(() => new Set());
+
+  const grupos = useMemo(() => {
+    const m = new Map();
+    for (const s of seriales) {
+      const k = `${s.so_number ?? '—'}|${s.plan_sku ?? ''}|${s.start_date}|${s.end_date}`;
+      if (!m.has(k)) {
+        m.set(k, {
+          k, so: s.so_number, plan_sku: s.plan_sku, plan_years: s.plan_years,
+          start_date: s.start_date, end_date: s.end_date, start_source: s.start_source,
+          region: s.region, end_customer: s.end_customer, customer: s.customer,
+          sku: s.plan_sku, so_number: s.so_number, // para WarrantyBadge
+          items: new Set(), filas: [],
+        });
+      }
+      const g = m.get(k);
+      if (s.sku) g.items.add(s.sku);
+      g.filas.push(s);
+    }
+    return [...m.values()];
+  }, [seriales]);
+
+  const alternar = k => setAbiertos(prev => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
+
   return (
     <Panel>
       <table className="w-full text-xs">
-        <Encabezados cols={['Serial', 'Item', 'Plan', 'Region',
+        <Encabezados cols={['Devices', 'Item', 'Plan', 'Region',
                             'Warranty start', 'Warranty end', 'Status',
                             'End customer', 'Billed to']} />
         <tbody>
-          {seriales.length === 0 ? <Vacio cols={9}>Nothing matches</Vacio> : seriales.slice(0, 500).map(s => {
-            const dias = diasHasta(s.end_date);
-            const vencido = estadoGarantia(s.end_date) === 'expired';
+          {grupos.length === 0 ? <Vacio cols={9}>Nothing matches</Vacio> : grupos.slice(0, 300).map(g => {
+            const dias = diasHasta(g.end_date);
+            const vencido = estadoGarantia(g.end_date) === 'expired';
+            const abierto = abiertos.has(g.k);
+            const varios = g.filas.length > 1;
+            const items = [...g.items];
             return (
-              <tr key={`${s.serial}-${s.so_number}`} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
-                <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">
-                  <Link to={`/serials?q=${s.serial}`} className="hover:text-accent">{s.serial}</Link>
-                  {s.so_number && (
-                    <Link to={`/backlog?so=${s.so_number}`}
-                      className="block text-[10px] text-muted hover:text-accent">{s.so_number}</Link>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{s.sku}</td>
-                <td className="px-4 py-2.5 whitespace-nowrap">
-                  <span className="font-mono text-slate-300">{s.plan_sku ?? <span className="text-muted">—</span>}</span>
-                  {s.plan_sku && (
-                    <span className="block text-[10px] font-sans text-muted">{planLabel(s.plan_sku)}</span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-                  <span className={s.region === 'Unassigned' ? 'text-muted' : 'text-slate-300'}>
-                    {s.region}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
-                  {s.start_date}
-                  {s.start_source === 'so_date' && (
-                    <span className="text-muted" title="estimated from the SO date">~</span>
-                  )}
-                </td>
-                <td className={`px-4 py-2.5 font-mono whitespace-nowrap ${
-                  vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}`}>
-                  {s.end_date}
-                  {!vencido && dias <= DIAS_POR_VENCER && <span> · {dias}d</span>}
-                </td>
-                <td className="px-4 py-2.5"><WarrantyBadge w={s} compact /></td>
-                <td className="px-4 py-2.5 font-sans max-w-[220px] truncate" title={s.end_customer || 'not recorded'}>
-                  {s.end_customer
-                    ? <span className="text-white">{s.end_customer}</span>
-                    : <span className="text-muted">—</span>}
-                </td>
-                <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[200px] truncate"
-                  title={s.customer}>{nombreCuenta(s.customer)}</td>
-              </tr>
+              <Fragment key={g.k}>
+                <tr className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+                  <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                    {varios ? (
+                      <button onClick={() => alternar(g.k)}
+                        className="flex items-center gap-1.5 text-white hover:text-accent transition-colors"
+                        title={abierto ? 'Hide serial numbers' : 'Show all serial numbers'}>
+                        <span className={`inline-block transition-transform text-[10px] ${abierto ? 'rotate-90' : ''}`}>▶</span>
+                        {g.filas.length} devices
+                      </button>
+                    ) : (
+                      <Link to={`/serials?q=${g.filas[0].serial}`} className="text-white hover:text-accent">
+                        {g.filas[0].serial}
+                      </Link>
+                    )}
+                    {g.so && (
+                      <Link to={`/backlog?so=${g.so}`}
+                        className="block text-[10px] text-muted hover:text-accent">{g.so}</Link>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-muted max-w-[140px] truncate"
+                    title={items.join(', ')}>{items.join(' · ') || '—'}</td>
+                  <td className="px-4 py-2.5 whitespace-nowrap">
+                    <span className="font-mono text-slate-300">{g.plan_sku ?? <span className="text-muted">—</span>}</span>
+                    {g.plan_sku && (
+                      <span className="block text-[10px] font-sans text-muted">{planLabel(g.plan_sku)}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                    <span className={g.region === 'Unassigned' ? 'text-muted' : 'text-slate-300'}>
+                      {g.region}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
+                    {g.start_date}
+                    {g.start_source === 'so_date' && (
+                      <span className="text-muted" title="estimated from the SO date">~</span>
+                    )}
+                  </td>
+                  <td className={`px-4 py-2.5 font-mono whitespace-nowrap ${
+                    vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}`}>
+                    {g.end_date}
+                    {!vencido && dias <= DIAS_POR_VENCER && <span> · {dias}d</span>}
+                  </td>
+                  <td className="px-4 py-2.5"><WarrantyBadge w={g} compact /></td>
+                  <td className="px-4 py-2.5 font-sans max-w-[220px] truncate" title={g.end_customer || 'not recorded'}>
+                    {g.end_customer
+                      ? <span className="text-white">{g.end_customer}</span>
+                      : <span className="text-muted">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[200px] truncate"
+                    title={g.customer}>{nombreCuenta(g.customer)}</td>
+                </tr>
+                {varios && abierto && (
+                  <tr className="border-b border-white/[0.04]">
+                    <td colSpan={9} className="px-4 py-2.5 bg-white/[0.02]">
+                      <div className="flex flex-wrap gap-1.5">
+                        {g.filas.map(s => (
+                          <Link key={s.serial} to={`/serials?q=${s.serial}`}
+                            title={s.sku}
+                            className="font-mono text-[11px] px-2 py-0.5 rounded bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08] transition-colors">
+                            {s.serial}{items.length > 1 && <span className="text-muted"> · {s.sku}</span>}
+                          </Link>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
       </table>
-      {seriales.length > 500 && (
+      {grupos.length > 300 && (
         <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
-          Showing the first 500 of {seriales.length.toLocaleString()} — narrow the search or use Export Excel.
+          Showing the first 300 of {grupos.length.toLocaleString()} coverages — narrow the search or use Export Excel.
         </p>
       )}
     </Panel>
