@@ -54,18 +54,23 @@ function coincide(r, q) {
 async function exportarExcel(devices, software) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.json_to_sheet(devices.map(r => ({
-    'Serial': r.serial, 'Plan': `${r.plan_years}y (code ${r.plan_code})`,
-    'Date of sale': r.date_of_sale, 'End': r.end_date,
+  const ordenadas = [...devices].sort((a, b) =>
+    (a.end_date < b.end_date ? -1 : a.end_date > b.end_date ? 1 : (a.customer ?? '').localeCompare(b.customer ?? '') || (a.serial < b.serial ? -1 : 1)));
+  const ws1 = XLSX.utils.json_to_sheet(ordenadas.map(r => ({
+    'Subscription end': r.end_date,
     'Days left': Math.max(0, diasHasta(r.end_date) ?? 0),
+    'End customer': r.customer,
+    'Serial': r.serial, 'Device': r.device ?? '',
+    'Plan': `${r.plan_years}y (code ${r.plan_code})`,
+    'Date of sale': r.date_of_sale,
     'Status': estadoGarantia(r.end_date),
-    'End customer': r.customer, 'Customer email': r.customer_email,
-    'Workspace': r.customer_workspace, 'Reseller': r.reseller,
-    'Registered': r.submitted, 'Renewed': r.renovado ? 'yes' : '',
+    'Customer email': r.customer_email, 'Workspace': r.customer_workspace,
+    'Reseller': r.reseller, 'Registered': r.submitted,
+    'Renewed': r.renovado ? 'yes' : '',
   })));
-  ws1['!cols'] = [{ wch: 19 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 9 },
-                  { wch: 9 }, { wch: 32 }, { wch: 30 }, { wch: 18 }, { wch: 18 },
-                  { wch: 12 }, { wch: 8 }];
+  ws1['!cols'] = [{ wch: 14 }, { wch: 9 }, { wch: 32 }, { wch: 19 }, { wch: 12 },
+                  { wch: 15 }, { wch: 12 }, { wch: 9 }, { wch: 30 }, { wch: 18 },
+                  { wch: 18 }, { wch: 12 }, { wch: 8 }];
   XLSX.utils.book_append_sheet(wb, ws1, 'Device subscriptions');
   const ws2 = XLSX.utils.json_to_sheet(software.map(r => ({
     'SO': r.so_number, 'Customer': nombreCuenta(r.customer),
@@ -241,55 +246,111 @@ function Vacio({ cols, children }) {
   );
 }
 
+// Agrupado como lo lee Supply Chain: la FECHA DE FIN manda, adentro el
+// cliente final, y adentro del cliente cada serial con su device. Los grupos
+// de clientes arrancan abiertos; el botón los colapsa.
 function TablaDevices({ filas }) {
+  const [cerrados, setCerrados] = useState(() => new Set());
+
+  const grupos = useMemo(() => {
+    const porFecha = new Map();
+    for (const r of filas) {
+      if (!porFecha.has(r.end_date)) porFecha.set(r.end_date, new Map());
+      const porCliente = porFecha.get(r.end_date);
+      const k = (r.customer ?? '').trim() || '(no customer recorded)';
+      if (!porCliente.has(k)) porCliente.set(k, []);
+      porCliente.get(k).push(r);
+    }
+    return [...porFecha.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([fecha, m]) => ({
+        fecha,
+        total: [...m.values()].reduce((s, v) => s + v.length, 0),
+        clientes: [...m.entries()]
+          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+          .map(([cliente, regs]) => ({ cliente, regs })),
+      }));
+  }, [filas]);
+
+  const alternar = k => setCerrados(prev => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
+
+  if (grupos.length === 0) {
+    return (
+      <div className="bg-card rounded-lg border border-white/[0.08] px-4 py-8 text-center text-muted font-mono text-xs">
+        Nothing matches — or the Launchpad table is still empty
+      </div>
+    );
+  }
+
   return (
-    <Panel>
-      <table className="w-full text-xs">
-        <Encabezados cols={['Serial', 'Plan', 'Date of sale', 'Ends', 'Status',
-                            'End customer', 'Reseller', 'Registered']} />
-        <tbody>
-          {filas.length === 0 ? (
-            <Vacio cols={8}>Nothing matches — or the Launchpad table is still empty</Vacio>
-          ) : filas.slice(0, 500).map(r => {
-            const dias = diasHasta(r.end_date);
-            const vencido = estadoGarantia(r.end_date) === 'expired';
-            return (
-              <tr key={r.id} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
-                <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-                  <Link to={`/serials?q=${r.serial}`} className="text-white hover:text-accent">{r.serial}</Link>
-                  {r.renovado && (
-                    <span className="block text-[10px] text-accent/80"
-                      title="This serial has more than one registration (renewal or correction)">renewed</span>
+    <div className="space-y-3">
+      {grupos.slice(0, 80).map(g => {
+        const dias = diasHasta(g.fecha);
+        const vencido = estadoGarantia(g.fecha) === 'expired';
+        return (
+          <div key={g.fecha} className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+            {/* La fecha de fin es el título del grupo */}
+            <div className="flex items-baseline gap-3 px-4 py-2.5 border-b border-white/[0.06] bg-white/[0.02]">
+              <span className={`font-mono font-semibold text-sm ${
+                vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-white'}`}>
+                {g.fecha}
+              </span>
+              <span className={`font-mono text-[11px] ${
+                vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-400'}`}>
+                {vencido ? 'expired' : `in ${dias}d`}
+              </span>
+              <span className="ml-auto font-mono text-[11px] text-muted">
+                {g.total} {g.total === 1 ? 'device' : 'devices'} · {g.clientes.length} {g.clientes.length === 1 ? 'customer' : 'customers'}
+              </span>
+            </div>
+            {g.clientes.map(({ cliente, regs }) => {
+              const k = `${g.fecha}|${cliente}`;
+              const abierto = !cerrados.has(k);
+              const ventas = [...new Set(regs.map(r => r.date_of_sale))].sort();
+              const planes = [...new Set(regs.map(r => `${r.plan_years}y`))];
+              const resellers = [...new Set(regs.map(r => r.reseller).filter(Boolean))];
+              return (
+                <div key={k} className="border-b border-white/[0.04] last:border-b-0">
+                  <button onClick={() => alternar(k)}
+                    className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
+                    <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
+                    <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
+                    <span className="font-mono text-[10px] text-muted whitespace-nowrap">
+                      {regs.length} {regs.length === 1 ? 'device' : 'devices'} · plan {planes.join('/')}
+                      {' · sold '}{ventas[0]}{ventas.length > 1 ? ` … ${ventas[ventas.length - 1]}` : ''}
+                    </span>
+                    <span className="ml-auto font-sans text-[10px] text-muted truncate max-w-[180px]"
+                      title={resellers.join(', ')}>via {resellers.join(', ') || '—'}</span>
+                  </button>
+                  {abierto && (
+                    <div className="flex flex-wrap gap-1.5 px-4 pb-2.5 pl-10">
+                      {regs.map(r => (
+                        <Link key={r.id} to={`/serials?q=${r.serial}`}
+                          title={`${r.device ?? 'device unknown'}${r.renovado ? ' · renewed' : ''} · sold ${r.date_of_sale}`}
+                          className="font-mono text-[11px] px-2 py-0.5 rounded bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08] transition-colors">
+                          {r.serial}
+                          <span className="text-muted"> · {r.device ?? '?'}</span>
+                          {r.renovado && <span className="text-accent/80"> ·R</span>}
+                        </Link>
+                      ))}
+                    </div>
                   )}
-                </td>
-                <td className="px-4 py-2.5 whitespace-nowrap">
-                  <span className="font-mono text-slate-300">{r.plan_years}y</span>
-                  <span className="block text-[10px] font-sans text-muted">code {r.plan_code}</span>
-                </td>
-                <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">{r.date_of_sale}</td>
-                <td className={`px-4 py-2.5 font-mono whitespace-nowrap ${
-                  vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}`}>
-                  {r.end_date}
-                </td>
-                <td className="px-4 py-2.5"><Badge end={r.end_date} /></td>
-                <td className="px-4 py-2.5 font-sans max-w-[240px] truncate"
-                  title={`${r.customer}${r.customer_email ? ` · ${r.customer_email}` : ''}${r.customer_workspace ? ` · workspace ${r.customer_workspace}` : ''}`}>
-                  <span className="text-white">{r.customer || '—'}</span>
-                </td>
-                <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[160px] truncate"
-                  title={r.reseller_email}>{r.reseller}</td>
-                <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{r.submitted}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {filas.length > 500 && (
-        <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
-          Showing the first 500 of {filas.length.toLocaleString()} — narrow the search or use Export Excel.
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+      {grupos.length > 80 && (
+        <p className="text-[10px] text-muted font-mono">
+          Showing the first 80 of {grupos.length} end dates — narrow the search or use Export Excel.
         </p>
       )}
-    </Panel>
+    </div>
   );
 }
 
