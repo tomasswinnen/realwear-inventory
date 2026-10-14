@@ -8,6 +8,7 @@ import { KPICard } from '../components/KPICard';
 import { WarrantyBadge } from '../components/WarrantyBadge';
 import {
   HOY, DIAS_POR_VENCER, diasHasta, estadoGarantia, nombreCuenta, clienteFinal,
+  planLabel,
 } from '../utils/warranty';
 import { REGIONES, regionDe } from '../utils/region';
 
@@ -407,9 +408,11 @@ function TablaEquipos({ seriales }) {
                   )}
                 </td>
                 <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{s.sku}</td>
-                <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
-                  {s.plan_sku ?? <span className="text-muted">—</span>}
-                  {s.plan_years && <span className="text-muted opacity-70"> · {s.plan_years}y</span>}
+                <td className="px-4 py-2.5 whitespace-nowrap">
+                  <span className="font-mono text-slate-300">{s.plan_sku ?? <span className="text-muted">—</span>}</span>
+                  {s.plan_sku && (
+                    <span className="block text-[10px] font-sans text-muted">{planLabel(s.plan_sku)}</span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                   <span className={s.region === 'Unassigned' ? 'text-muted' : 'text-slate-300'}>
@@ -537,7 +540,7 @@ function TablaClientes({ clientes }) {
                 <td className="px-4 py-2.5 font-num text-slate-300">{g.planes}</td>
                 <td className="px-4 py-2.5 font-num text-slate-300">{g.unidades}</td>
                 <td className="px-4 py-2.5 font-mono text-muted max-w-[200px] truncate"
-                  title={[...g.skus].join(', ')}>{[...g.skus].join(' · ')}</td>
+                  title={[...g.skus].map(planLabel).join('\n')}>{[...g.skus].join(' · ')}</td>
                 <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                   {g.proximo
                     ? <span className={dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}>
@@ -577,8 +580,9 @@ function TablaCoberturas({ planes }) {
               </td>
               <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[220px] truncate"
                 title={w.customer}>{nombreCuenta(w.customer)}</td>
-              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
-                {w.sku} <span className="opacity-60">{w.plan_years}y</span>
+              <td className="px-4 py-2.5 whitespace-nowrap">
+                <span className="font-mono text-muted">{w.sku}</span>
+                <span className="block text-[10px] font-sans text-muted opacity-80">{planLabel(w.sku)}</span>
               </td>
               <td className="px-4 py-2.5 font-num text-slate-300 whitespace-nowrap">
                 {w.qty}

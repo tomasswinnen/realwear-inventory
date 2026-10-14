@@ -50,3 +50,29 @@ export function clienteFinal(fila) {
 export function nombreCuenta(customer) {
   return (customer ?? '').replace(/^\d+\s+/, '') || '—';
 }
+
+// Qué es cada plan, en humano. Los SKUs vienen de NetSuite (PLAZO_PLAN del
+// pipeline). "Warranty" y "subscription" acá son lo mismo: un contrato de
+// cobertura/soporte por tiempo vendido en la línea de la SO. WAR/SUPP/RMA
+// suelen venir juntos en un mismo contrato grande (garantía + soporte + pool
+// de reposición sobre la misma flota).
+export const PLAN_LABEL = {
+  'SSP-POP1Y': 'Service plan · point of purchase · 1y',
+  'SSP-POP2Y': 'Service plan · point of purchase · 2y',
+  'SSP-ADD1Y': 'Service plan · added later · 1y',
+  'SSP-ADD2Y': 'Service plan · added later · 2y',
+  'SSP-12': 'Service plan · 12 months',
+  'SSP-24': 'Service plan · 24 months',
+  'SSP-36': 'Service plan · 36 months',
+  'SP-ADV1': 'Advanced service plan · 1y',
+  'SP-ADV2': 'Advanced service plan · 2y',
+  'SP-ADV3': 'Advanced service plan · 3y',
+  'WAR-STD1Y': 'Standard warranty · 1y',
+  'SUPP-STD1Y': 'Standard support · 1y',
+  'RMA-POOL1YR': 'RMA replacement pool · 1y',
+  'DEV-PRO-12': 'Device Pro subscription · 12 months',
+};
+
+export function planLabel(sku) {
+  return PLAN_LABEL[sku] ?? sku ?? '';
+}

@@ -1,4 +1,4 @@
-import { estadoGarantia, diasHasta, ESTADO_LABEL, ESTADO_STYLE, clienteFinal } from '../utils/warranty';
+import { estadoGarantia, diasHasta, ESTADO_LABEL, ESTADO_STYLE, clienteFinal, planLabel } from '../utils/warranty';
 
 // Badge de cobertura, usado en Serials, SO History y Warranties. Muestra el
 // estado y, al pasar el mouse, de dónde salió: plan, fechas, cliente final y
@@ -9,7 +9,7 @@ export function WarrantyBadge({ w, compact = false }) {
   const dias = diasHasta(w.end_date);
   const ec = clienteFinal(w);
   const detalle = [
-    w.sku && `Plan ${w.sku}`,
+    w.sku && `${planLabel(w.sku)} (${w.sku})`,
     `${w.start_date} → ${w.end_date}`,
     w.start_source === 'so_date' && 'start date estimated from the SO date',
     ec ? `End customer: ${ec}` : 'End customer not recorded in NetSuite',
