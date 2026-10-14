@@ -48,7 +48,7 @@ const FILTROS = {
 function coincide(r, q) {
   if (!q) return true;
   const t = q.toLowerCase();
-  return [r.serial, r.customer, r.customer_email, r.reseller, r.so_number, r.end_customer]
+  return [r.serial, r.customer, r.customer_email, r.reseller, r.distributor, r.so_number, r.end_customer]
     .some(v => (v ?? '').toLowerCase().includes(t));
 }
 
@@ -66,12 +66,13 @@ async function exportarExcel(devices, software) {
     'Date of sale': r.date_of_sale,
     'Status': estadoGarantia(r.end_date),
     'Customer email': r.customer_email, 'Workspace': r.customer_workspace,
-    'Reseller': r.reseller, 'Registered': r.submitted,
+    'Reseller': r.reseller, 'Distributor': r.distributor ?? '',
+    'Original customer': r.original_customer ?? '', 'Registered': r.submitted,
     'Renewed': r.renovado ? 'yes' : '',
   })));
   ws1['!cols'] = [{ wch: 14 }, { wch: 9 }, { wch: 32 }, { wch: 19 }, { wch: 12 },
                   { wch: 15 }, { wch: 12 }, { wch: 9 }, { wch: 30 }, { wch: 18 },
-                  { wch: 18 }, { wch: 12 }, { wch: 8 }];
+                  { wch: 18 }, { wch: 28 }, { wch: 28 }, { wch: 12 }, { wch: 8 }];
   XLSX.utils.book_append_sheet(wb, ws1, 'Device subscriptions');
   const ws2 = XLSX.utils.json_to_sheet(software.map(r => ({
     'SO': r.so_number, 'Customer': nombreCuenta(r.customer),
@@ -225,6 +226,8 @@ export function Subscriptions() {
             the customer activates it, and declares the date of sale — so coverage runs from
             first use, not from RealWear’s invoice. Launchpad plan codes: 2224 = 3 years,
             2227 = 2 years, 2228 = 1 year. “Renewed” marks serials registered more than once.
+            Reseller = who registered the device in Launchpad (“registered by RealWear” when it
+            was the admin account); Distributor = the account RealWear invoiced, from NetSuite.
             Standard 1-year warranty registrations ({v.kpi.estandar.toLocaleString()} of them)
             are not listed here — warranty coverage lives in the Warranties tab. Software
             (Device Pro) comes from NetSuite and has no serials because it does not cover hardware.
@@ -357,6 +360,10 @@ function TablaDevices({ filas, q }) {
               const ventas = [...new Set(regs.map(r => r.date_of_sale))].sort();
               const planes = [...new Set(regs.map(r => `${r.plan_years}y`))];
               const resellers = [...new Set(regs.map(r => r.reseller).filter(Boolean))];
+              const distribuidores = [...new Set(regs.map(r => r.distributor).filter(Boolean))];
+              const originales = [...new Set(regs.map(r => r.original_customer).filter(Boolean))];
+              // "admin" = lo registro RealWear mismo en Launchpad: no dice quien lo vendio
+              const resellerReal = resellers.filter(r => r.toLowerCase() !== 'admin');
               const registros = [...new Set(regs.map(r => r.submitted).filter(Boolean))].sort();
               const emails = [...new Set(regs.map(r => r.customer_email).filter(Boolean))];
               const workspaces = [...new Set(regs.map(r => r.customer_workspace).filter(Boolean))];
@@ -373,8 +380,17 @@ function TablaDevices({ filas, q }) {
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
                     <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
-                    <span className="font-sans text-[10px] text-accent/80 truncate max-w-[160px] whitespace-nowrap"
-                      title={resellers.join(', ')}>via {resellers.join(', ') || '—'}</span>
+                    <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[360px]"
+                      title={`Reseller (registered in Launchpad): ${resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear, NetSuite): ${distribuidores.join(', ') || 'unknown'}${originales.length ? `\nOriginal customer: ${originales.join(', ')}` : ''}`}>
+                      <span className="text-muted">reseller </span>
+                      <span className={resellerReal.length ? 'text-accent/80' : 'text-muted italic'}>
+                        {resellerReal.length ? resellerReal.join(', ') : 'registered by RealWear'}
+                      </span>
+                      <span className="text-muted"> · distributor </span>
+                      <span className={distribuidores.length ? 'text-accent/80' : 'text-muted italic'}>
+                        {distribuidores.length ? distribuidores.join(', ') : 'unknown'}
+                      </span>
+                    </span>
                     <span className="font-mono text-[10px] text-muted whitespace-nowrap">
                       {regs.length} {regs.length === 1 ? 'device' : 'devices'} · plan {planes.join('/')}
                       {' · '}
