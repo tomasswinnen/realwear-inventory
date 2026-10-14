@@ -156,15 +156,8 @@ export function Warranties() {
     // Busqueda con contexto (igual que Subscriptions): el grupo fecha+cliente
     // que contiene el match se muestra ENTERO y el serial se resalta.
     const baseSer = serialesR.filter(s => test(estadoGarantia(s.end_date)) && enRegion(s));
-    let seriales;
-    if (q) {
-      const claveG = s => `${s.end_date}|${(clienteFinal(s) ?? nombreCuenta(s.customer)) || '—'}`;
-      const grupos = new Set(baseSer.filter(s => coincide(s, q)).map(claveG));
-      seriales = baseSer.filter(s => grupos.has(claveG(s)))
-        .map(s => ({ ...s, hit: coincide(s, q) }));
-    } else {
-      seriales = baseSer;
-    }
+    // Searching never removes rows: everything stays, matches get flagged.
+    const seriales = q ? baseSer.map(s => ({ ...s, hit: coincide(s, q) })) : baseSer;
 
     // Resumen por región: sobre TODO el histórico (sin búsqueda ni filtro de
     // estado) — es el mapa de responsabilidades, no una vista filtrada.
@@ -407,7 +400,15 @@ function Encabezados({ cols }) {
 // y resalta en amarillo los seriales que matchean.
 function TablaEquipos({ seriales, q }) {
   const [cerrados, setCerrados] = useState(() => new Set());
-  useEffect(() => { setCerrados(new Set()); }, [q]);
+  useEffect(() => {
+    setCerrados(new Set());
+    if (!q) return;
+    const timer = setTimeout(() => {
+      document.querySelector('[data-hit="true"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [q]);
 
   const grupos = useMemo(() => {
     const porFecha = new Map();
@@ -444,7 +445,7 @@ function TablaEquipos({ seriales, q }) {
 
   return (
     <div className="space-y-3">
-      {grupos.slice(0, 80).map(g => {
+      {(q ? grupos : grupos.slice(0, 80)).map(g => {
         const dias = diasHasta(g.fecha);
         const vencido = estadoGarantia(g.fecha) === 'expired';
         return (
@@ -500,6 +501,7 @@ function TablaEquipos({ seriales, q }) {
                       <div className="flex flex-wrap gap-1.5">
                         {regs.map(s => (
                           <Link key={`${s.serial}-${s.so_number}`} to={`/serials?q=${s.serial}`}
+                            data-hit={s.hit ? 'true' : undefined}
                             title={`${s.sku ?? ''}${s.so_number ? ` · ${s.so_number}` : ''}${s.start_source === 'so_date' ? ' · start estimated' : ''}`}
                             className={`font-mono text-[11px] px-2 py-0.5 rounded transition-colors ${
                               s.hit
@@ -519,7 +521,7 @@ function TablaEquipos({ seriales, q }) {
           </section>
         );
       })}
-      {grupos.length > 80 && (
+      {!q && grupos.length > 80 && (
         <p className="text-[10px] text-muted font-mono">
           Showing the first 80 of {grupos.length} end dates — narrow the search or use Export Excel.
         </p>

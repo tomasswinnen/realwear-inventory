@@ -118,16 +118,11 @@ export function Subscriptions() {
     // WHOLE — every sibling serial visible — and the matches get highlighted,
     // instead of stripping the serial out of its surroundings.
     const base = pagasTodo.filter(r => test(estadoGarantia(r.end_date)));
-    let devices;
-    if (q) {
-      const clave = r => `${r.end_date}|${(r.customer ?? '').trim() || '(no customer recorded)'}`;
-      const grupos = new Set(base.filter(r => coincide(r, q)).map(clave));
-      devices = base.filter(r => grupos.has(clave(r)))
-        .map(r => ({ ...r, hit: coincide(r, q) }));
-    } else {
-      devices = base;
-    }
-    const software = data.sw.filter(r => test(estadoGarantia(r.end_date)) && coincide(r, q));
+    // Searching NEVER removes rows: the whole ledger stays in place, the
+    // matches get flagged (yellow) and the table scrolls to the first one.
+    const devices = q ? base.map(r => ({ ...r, hit: coincide(r, q) })) : base;
+    const baseSw = data.sw.filter(r => test(estadoGarantia(r.end_date)));
+    const software = q ? baseSw.map(r => ({ ...r, hit: coincide(r, q) })) : baseSw;
 
     const vig = pagasTodo.filter(r => estadoGarantia(r.end_date) !== 'expired');
     const kpi = {
@@ -273,8 +268,16 @@ function Vacio({ cols, children }) {
 // de clientes arrancan abiertos; el botón los colapsa.
 function TablaDevices({ filas, q }) {
   const [cerrados, setCerrados] = useState(() => new Set());
-  // Una busqueda nueva reabre todo, asi el serial resaltado siempre se ve
-  useEffect(() => { setCerrados(new Set()); }, [q]);
+  // Una busqueda nueva reabre todo y desplaza la vista hasta el primer match
+  useEffect(() => {
+    setCerrados(new Set());
+    if (!q) return;
+    const timer = setTimeout(() => {
+      document.querySelector('[data-hit="true"]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [q]);
 
   const grupos = useMemo(() => {
     const porFecha = new Map();
@@ -312,7 +315,7 @@ function TablaDevices({ filas, q }) {
 
   return (
     <div className="space-y-3">
-      {grupos.slice(0, 80).map(g => {
+      {(q ? grupos : grupos.slice(0, 80)).map(g => {
         const dias = diasHasta(g.fecha);
         const vencido = estadoGarantia(g.fecha) === 'expired';
         return (
@@ -378,6 +381,7 @@ function TablaDevices({ filas, q }) {
                     <div className="flex flex-wrap gap-1.5 px-4 pb-2.5 pl-10">
                       {regs.map(r => (
                         <Link key={r.id} to={`/serials?q=${r.serial}`}
+                          data-hit={r.hit ? 'true' : undefined}
                           title={`${r.device ?? 'device unknown'}${r.renovado ? ' · renewed' : ''} · sold ${r.date_of_sale}`}
                           className={`font-mono text-[11px] px-2 py-0.5 rounded transition-colors ${
                             r.hit
@@ -397,7 +401,7 @@ function TablaDevices({ filas, q }) {
           </div>
         );
       })}
-      {grupos.length > 80 && (
+      {!q && grupos.length > 80 && (
         <p className="text-[10px] text-muted font-mono">
           Showing the first 80 of {grupos.length} end dates — narrow the search or use Export Excel.
         </p>
@@ -416,7 +420,9 @@ function TablaSoftware({ filas }) {
             const dias = diasHasta(r.end_date);
             const vencido = estadoGarantia(r.end_date) === 'expired';
             return (
-              <tr key={`${r.so_number}-${i}`} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+              <tr key={`${r.so_number}-${i}`} data-hit={r.hit ? 'true' : undefined}
+                className={`border-b border-white/[0.04] transition-colors ${
+                  r.hit ? 'bg-warning/10' : 'hover:bg-white/[0.03]'}`}>
                 <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                   <Link to={`/backlog?so=${r.so_number}`} className="text-accent hover:text-accent/80">
                     {r.so_number}
