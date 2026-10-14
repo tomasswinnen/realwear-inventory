@@ -13,6 +13,10 @@ import {
 } from '../utils/warranty';
 import { fetchSelloutMap, selloutDe, SELLOUT_LABEL, SELLOUT_TITLE } from '../utils/sellout';
 import { REGIONES, regionDe } from '../utils/region';
+import {
+  segLabel, normSerial, seguimientoDe, resumenSeguimiento, guardarSeguimiento,
+  descargarCSV, SeguimientoPill, SeguimientoFiltro, SeguimientoEditor,
+} from '../components/FollowUp';
 
 // Garantías / service plans. Fuente: tablas `warranties` (una fila por línea
 // de plan vendida) y `warranty_serials` (una fila por equipo cubierto), que
@@ -46,26 +50,79 @@ async function fetchWarranties() {
       return null; // tabla ausente
     }
   };
-  const [planes, seriales, sellout] = await Promise.all([
+  const [planes, seriales, sellout, fu] = await Promise.all([
     traer('warranties'), traer('warranty_serials'),
     // Relleno: end customer reportado por el disti en el sell-out, para los
     // seriales cuya línea de NetSuite no lo tiene.
     fetchSelloutMap(),
+    // Seguimiento de renovaciones (lo marca el equipo en la página)
+    traer('warranty_followup'),
   ]);
   return {
     planes: planes ?? [],
     seriales: seriales ?? [],
     sellout,
+    fu: fu ?? [], fuFalta: fu === null,
     falta: planes === null,
   };
 }
 
+// Momento de una cobertura según su fecha de fin (igual que Subscriptions).
+function momento(end) {
+  const d = diasHasta(end);
+  if (d == null) return 'old';
+  if (d > DIAS_POR_VENCER) return 'active';
+  if (d > 0) return 'renew';
+  if (d > -DIAS_POR_VENCER) return 'lapsed';
+  return 'old';
+}
+const MOMENTO_LABEL = { renew: 'Renewal window', active: 'In warranty', lapsed: 'Lapsed', old: 'Expired' };
+
 const FILTROS = {
-  vigentes: { label: 'In warranty', test: e => e === 'active' || e === 'expiring' },
-  porvencer: { label: `Expiring ≤${DIAS_POR_VENCER}d`, test: e => e === 'expiring' },
-  vencidas: { label: 'Expired', test: e => e === 'expired' },
+  renew: { label: `To renew ≤${DIAS_POR_VENCER}d`, test: e => e === 'renew' },
+  vigentes: { label: 'In warranty', test: e => e === 'renew' || e === 'active' },
+  lapsed: { label: `Lapsed ≤${DIAS_POR_VENCER}d`, test: e => e === 'lapsed' },
   todas: { label: 'All', test: () => true },
 };
+
+const uniq = xs => [...new Set(xs.filter(Boolean))];
+
+// Una fila por contrato (equipos de un mismo cliente que vencen el mismo día)
+// = un deal de renovación en HubSpot. Mismas columnas base que Subscriptions.
+function filaContrato(c) {
+  const regs = c.regs;
+  const esFinal = Boolean(clienteFinal(regs[0]));
+  const serials = uniq(regs.map(r => r.serial)).sort();
+  const inicios = uniq(regs.map(r => r.start_date)).sort();
+  const skus = [...regs.reduce((m, r) => m.set(r.sku ?? '?', (m.get(r.sku ?? '?') ?? 0) + 1), new Map()).entries()]
+    .map(([k, n]) => (n > 1 ? `${k} ×${n}` : k));
+  return {
+    'Deal name': `Warranty renewal – ${c.cliente} – ${serials.length} device${serials.length === 1 ? '' : 's'} – ends ${c.end_date}`,
+    'Pipeline': 'Sales Pipeline',
+    'Close date': c.end_date,
+    'Amount': '',
+    'Follow-up status': segLabel(c.seguimiento),
+    'Follow-up note': c.nota,
+    'Contact (who to call)': c.cliente,
+    'Contact role': esFinal ? 'end customer' : 'distributor',
+    'End customer': esFinal ? c.cliente : '',
+    'End customer source': esFinal ? (regs.some(r => r.end_customer_source === 'sellout') ? 'distributor sell-out report' : 'NetSuite') : '',
+    'Reseller (sell-out)': uniq(regs.map(r => r.sellout_reseller)).join('; '),
+    'Distributor (billed to)': uniq(regs.map(r => nombreCuenta(r.customer))).join('; '),
+    'Region': uniq(regs.map(r => r.region)).join('/'),
+    'Devices': serials.length,
+    'Device SKUs': skus.join('; '),
+    'Plan': uniq(regs.map(r => r.plan_sku)).map(planLabel).join('; '),
+    'Start date': inicios[0] ?? '',
+    'Start estimated': regs.some(r => r.start_source === 'so_date') ? 'yes' : '',
+    'End date': c.end_date,
+    'Days left': diasHasta(c.end_date),
+    'Status': MOMENTO_LABEL[momento(c.end_date)],
+    'NetSuite SO': uniq(regs.map(r => r.so_number)).sort().join('; '),
+    'Serial numbers': serials.join('; '),
+    'Contract ID': `WAR-${c.end_date}-${serials[0] ?? 'x'}`,
+  };
+}
 
 const VISTAS = [
   ['devices', 'By device'],
@@ -81,9 +138,17 @@ function coincide(w, q) {
     .some(v => (v ?? '').toLowerCase().includes(t));
 }
 
-async function exportarExcel(planes, seriales) {
+async function exportarExcel(planes, seriales, contratos) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
+
+  // Contratos primero: es la lista de trabajo (una fila = un deal de renovación)
+  const ws0 = XLSX.utils.json_to_sheet(contratos.map(filaContrato));
+  ws0['!cols'] = [{ wch: 50 }, { wch: 14 }, { wch: 11 }, { wch: 8 }, { wch: 14 }, { wch: 30 }, { wch: 30 },
+                  { wch: 13 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 28 }, { wch: 9 }, { wch: 7 },
+                  { wch: 24 }, { wch: 34 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, { wch: 8 }, { wch: 14 },
+                  { wch: 16 }, { wch: 40 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, ws0, 'Contracts');
 
   // Equipos primero: es la hoja que responde "¿este serial está cubierto?"
   const ws2 = XLSX.utils.json_to_sheet(seriales.map(s => ({
@@ -97,11 +162,13 @@ async function exportarExcel(planes, seriales) {
     'Start Estimated': s.start_source === 'so_date' ? 'yes' : '',
     'Warranty End': s.end_date,
     'Days Left': Math.max(0, diasHasta(s.end_date) ?? 0),
-    'Status': estadoGarantia(s.end_date),
+    'Status': MOMENTO_LABEL[momento(s.end_date)],
+    'Follow-up': segLabel(s.fu?.status ?? 'open'),
+    'Follow-up note': s.fu?.note ?? '',
   })));
   ws2['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 6 }, { wch: 10 },
                   { wch: 11 }, { wch: 28 }, { wch: 22 }, { wch: 32 }, { wch: 13 }, { wch: 13 },
-                  { wch: 13 }, { wch: 9 }, { wch: 10 }];
+                  { wch: 13 }, { wch: 9 }, { wch: 14 }, { wch: 14 }, { wch: 30 }];
   XLSX.utils.book_append_sheet(wb, ws2, 'Devices');
 
   const hojaPlanes = planes.map(w => ({
@@ -123,7 +190,10 @@ async function exportarExcel(planes, seriales) {
 
 export function Warranties() {
   const [q, setQ] = useState('');
-  const [filtro, setFiltro] = useState('vigentes');
+  const [filtro, setFiltro] = useState('renew');
+  const [seg, setSeg] = useState('any');
+  // Seguimientos guardados en esta sesión (para no recargar todo al guardar)
+  const [fuLocal, setFuLocal] = useState(() => new Map());
   const [region, setRegion] = useState('all');
   const [vista, setVista] = useState('devices');
   const [exportando, setExportando] = useState(false);
@@ -168,14 +238,47 @@ export function Warranties() {
       return fila;
     });
 
+    // Seguimiento por serial (solo vale para su fecha de fin) y contrato =
+    // fecha de fin + cliente (end customer, o la cuenta facturada).
+    const fuPor = new Map(data.fu.map(f => [normSerial(f.serial), f]));
+    for (const [k, f] of fuLocal) fuPor.set(k, f);
+    const porContrato = new Map();
+    for (const s of serialesR) {
+      s.fu = seguimientoDe(fuPor, s.serial, s.end_date);
+      s.cliente = (clienteFinal(s) ?? nombreCuenta(s.customer)) || '—';
+      s.ckey = `${s.end_date}|${s.cliente}`;
+      if (!porContrato.has(s.ckey)) porContrato.set(s.ckey, []);
+      porContrato.get(s.ckey).push(s);
+    }
+    const contratosTodos = [...porContrato.entries()].map(([key, regs]) => ({
+      key, regs, end_date: regs[0].end_date, cliente: regs[0].cliente,
+      momento: momento(regs[0].end_date), ...resumenSeguimiento(regs),
+    }));
+    const segDe = new Map(contratosTodos.map(c => [c.key, c.seguimiento]));
+
     const test = FILTROS[filtro].test;
     const enRegion = r => region === 'all' || r.region === region;
-    const planes = planesR.filter(w => test(estadoGarantia(w.end_date)) && coincide(w, q) && enRegion(w));
+    const okSeg = s => seg === 'any' || segDe.get(s.ckey) === seg;
+    const planes = planesR.filter(w => test(momento(w.end_date)) && coincide(w, q) && enRegion(w));
     // Busqueda con contexto (igual que Subscriptions): el grupo fecha+cliente
     // que contiene el match se muestra ENTERO y el serial se resalta.
-    const baseSer = serialesR.filter(s => test(estadoGarantia(s.end_date)) && enRegion(s));
+    const baseSer = serialesR.filter(s => test(momento(s.end_date)) && enRegion(s) && okSeg(s));
     // Searching never removes rows: everything stays, matches get flagged.
     const seriales = q ? baseSer.map(s => ({ ...s, hit: coincide(s, q) })) : baseSer;
+    const enVista = new Set(baseSer.map(s => s.ckey));
+    const fuera = q
+      ? new Set(serialesR.filter(s => !enVista.has(s.ckey) && coincide(s, q)).map(s => s.ckey)).size
+      : 0;
+    const contratosVista = contratosTodos.filter(c => enVista.has(c.key))
+      .sort((a, b) => (a.end_date < b.end_date ? -1 : 1));
+    const cRegion = contratosTodos.filter(c => c.regs.some(enRegion));
+    const conteoFecha = Object.fromEntries(Object.entries(FILTROS)
+      .map(([k, f]) => [k, cRegion.filter(c => f.test(c.momento)).length]));
+    const conteoSeg = { any: 0 };
+    for (const c of cRegion.filter(c => test(c.momento))) {
+      conteoSeg.any += 1;
+      conteoSeg[c.seguimiento] = (conteoSeg[c.seguimiento] ?? 0) + 1;
+    }
 
     // Resumen por región: sobre TODO el histórico (sin búsqueda ni filtro de
     // estado) — es el mapa de responsabilidades, no una vista filtrada.
@@ -260,15 +363,37 @@ export function Warranties() {
       estimados: vigPlanes.filter(w => w.start_source === 'so_date').length,
       rellenados: vigSer.filter(s => s.end_customer_source === 'sellout').length,
     };
-    return { planes, seriales, clientes, regiones, kpi, serialesTodos: serialesR };
-  }, [data, q, filtro, region]);
+    const ren = contratosTodos.filter(c => c.momento === 'renew');
+    const lap = contratosTodos.filter(c => c.momento === 'lapsed');
+    kpi.renew = ren.length;
+    kpi.renewDev = ren.reduce((n, c) => n + c.regs.length, 0);
+    kpi.renewOpen = ren.filter(c => c.seguimiento === 'open').length;
+    kpi.lapsed = lap.length;
+    kpi.lapsedOpen = lap.filter(c => c.seguimiento !== 'renewed' && c.seguimiento !== 'lost').length;
+    return {
+      planes, seriales, clientes, regiones, kpi, serialesTodos: serialesR,
+      contratosVista, conteoFecha, conteoSeg, fuera,
+    };
+  }, [data, q, filtro, region, seg, fuLocal]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
   const exportar = async () => {
     if (exportando || !v) return;
     setExportando(true);
-    try { await exportarExcel(v.planes, v.seriales); } finally { setExportando(false); }
+    try { await exportarExcel(v.planes, v.seriales, v.contratosVista); } finally { setExportando(false); }
+  };
+  const exportarHubspot = () => {
+    if (!v) return;
+    descargarCSV(v.contratosVista.map(filaContrato), `warranties_hubspot_${filtro}_${HOY()}.csv`);
+  };
+  const guardar = async (c, estado, nota) => {
+    const filas = await guardarSeguimiento('warranty_followup', c.regs, estado, nota);
+    setFuLocal(prev => {
+      const n = new Map(prev);
+      for (const f of filas) n.set(normSerial(f.serial), f);
+      return n;
+    });
   };
 
   const regionesPresentes = v
@@ -280,20 +405,23 @@ export function Warranties() {
       <div>
         <h1 className="text-xl font-sans font-semibold text-white">Warranties</h1>
         <p className="text-xs text-muted font-mono mt-0.5">
-          Device-by-device service plan coverage — exact dates, plan type and the region responsible
+          Renewal tracker for service plan coverage (NetSuite) — one row = the devices of one customer that end on the same day, with exact dates, plan and the region responsible
         </p>
       </div>
 
       {loading || !v ? <KPISkeleton /> : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <KPICard label="Devices in warranty" value={v.kpi.equipos.toLocaleString()}
             sub={`${v.kpi.planes} active coverages · ${v.kpi.sinSerial.toLocaleString()} more units covered without a serial`}
             accent />
           <KPICard label="End customers" value={v.kpi.finales.toLocaleString()}
             sub={`${v.kpi.sinFinal} coverages with distributor only${v.kpi.rellenados ? ` · ${v.kpi.rellenados} devices named only by sell-out` : ''}`} />
-          <KPICard label={`Expiring ≤${DIAS_POR_VENCER}d`} value={v.kpi.porVencer.toLocaleString()}
-            sub={`${v.kpi.equiposPorVencer} devices`}
-            color={v.kpi.porVencer ? 'text-warning' : undefined} />
+          <KPICard label={`To renew ≤${DIAS_POR_VENCER}d`} value={v.kpi.renew.toLocaleString()}
+            sub={`contracts · ${v.kpi.renewDev} devices · ${v.kpi.renewOpen} not contacted yet`}
+            color={v.kpi.renew ? 'text-warning' : undefined} />
+          <KPICard label={`Lapsed ≤${DIAS_POR_VENCER}d`} value={v.kpi.lapsed.toLocaleString()}
+            sub={`contracts · ${v.kpi.lapsedOpen} not marked renewed or lost`}
+            color={v.kpi.lapsedOpen ? 'text-danger' : undefined} />
           <KPICard label="Estimated start" value={v.kpi.estimados.toLocaleString()}
             sub="no sold date in NetSuite" />
         </div>
@@ -312,7 +440,7 @@ export function Warranties() {
             <button key={k} onClick={() => setFiltro(k)}
               className={`px-2.5 py-1.5 rounded text-[11px] font-mono transition-colors ${
                 filtro === k ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`}>
-              {f.label}
+              {f.label}{v ? <span className="opacity-60"> · {v.conteoFecha[k]}</span> : null}
             </button>
           ))}
         </div>
@@ -327,9 +455,14 @@ export function Warranties() {
             </button>
           ))}
           <button onClick={exportar} disabled={exportando}
-            title="Two sheets — devices and coverages, with the current filter applied"
+            title="Contracts, devices and coverages — for the current view"
             className="px-3 py-1.5 rounded border border-white/[0.12] text-[11px] font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
             {exportando ? 'Exporting…' : 'Export Excel'}
+          </button>
+          <button onClick={exportarHubspot} disabled={!v}
+            title="CSV with one row per contract (one renewal deal each), ready to import into HubSpot as Deals — for the current view"
+            className="px-3 py-1.5 rounded border border-accent/40 text-[11px] font-mono text-accent hover:bg-accent/10 disabled:opacity-40 transition-colors whitespace-nowrap">
+            Export for HubSpot{v ? ` (${v.contratosVista.length})` : ''}
           </button>
         </div>
       </div>
@@ -348,6 +481,23 @@ export function Warranties() {
         ))}
       </div>
 
+      {vista === 'devices' && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <SeguimientoFiltro seg={seg} setSeg={setSeg} conteo={v?.conteoSeg} />
+          {q && v?.fuera > 0 && (
+            <button onClick={() => { setFiltro('todas'); setSeg('any'); setRegion('all'); }}
+              className="ml-2 text-[10px] font-mono text-warning underline underline-offset-2">
+              {v.fuera} more match{v.fuera === 1 ? '' : 'es'} outside this view — show all
+            </button>
+          )}
+        </div>
+      )}
+      {data?.fuFalta && (
+        <p className="text-xs font-mono text-warning bg-warning/5 border border-warning/20 rounded px-3 py-2">
+          Follow-up can’t be saved yet: the warranty_followup table doesn’t exist (SQL_warranty_followup.sql).
+        </p>
+      )}
+
       {v && vista === 'devices' && (
         <ExpiryChart filas={v.serialesTodos} titulo="Warranty expirations by month (identified devices)" />
       )}
@@ -360,7 +510,9 @@ export function Warranties() {
 
       {loading || !v ? <TableSkeleton rows={10} cols={6} /> : (
         <>
-          {vista === 'devices' && <TablaEquipos seriales={v.seriales} q={q} />}
+          {vista === 'devices' && (
+            <TablaEquipos seriales={v.seriales} q={q} onGuardar={guardar} sinTabla={data.fuFalta} />
+          )}
           {vista === 'regions' && (
             <TablaRegiones regiones={v.regiones}
               onElegir={r => { setRegion(r); setVista('devices'); }} />
@@ -368,6 +520,12 @@ export function Warranties() {
           {vista === 'customers' && <TablaClientes clientes={v.clientes} />}
           {vista === 'coverages' && <TablaCoberturas planes={v.planes} />}
 
+          <div className="text-[10px] text-muted font-mono leading-relaxed space-y-1.5">
+            <p className="text-slate-300">How to use it</p>
+            <p>1 · Work the “To renew” list (By device): the big name is the end customer, or the distributor RealWear invoiced when NetSuite has no end customer. Open the contract, set Follow-up (Contacted → Quote sent → Renewed / Lost) and leave a note. Everyone sees it.</p>
+            <p>2 · When the new coverage arrives (new plan in NetSuite), it starts again as “Not contacted” on its new end date — the old status stays with the old period.</p>
+            <p>3 · “Export for HubSpot” = one row per contract (one renewal deal), close date = end date. “Export Excel” = contracts + devices + coverages. Both export the current view.</p>
+          </div>
           <p className="text-[10px] text-muted font-mono leading-relaxed">
             Coverage lives on the sales order line in NetSuite, not on the serial.
             “Billed to” is the account that bought it — usually a distributor — and the
@@ -417,22 +575,22 @@ function Encabezados({ cols }) {
 // ── Por equipo: fecha de fin → end customer → seriales (misma estructura que
 // Subscriptions). Los grupos arrancan abiertos; una búsqueda nueva los reabre
 // y resalta en amarillo los seriales que matchean.
-function TablaEquipos({ seriales, q }) {
+function TablaEquipos({ seriales, q, onGuardar, sinTabla }) {
   // Todo arranca COLAPSADO; una busqueda expande solo los grupos con match.
+  // Depende de QUÉ grupos matchean (no del array): guardar un seguimiento
+  // recalcula las filas y no tiene que cerrar lo que el usuario abrió.
   const [abiertos, setAbiertos] = useState(() => new Set());
+  const hits = [...new Set(seriales.filter(s => s.hit)
+    .map(s => `${s.end_date}|${(clienteFinal(s) ?? nombreCuenta(s.customer)) || '—'}`))].join('\n');
   useEffect(() => {
     if (!q) { setAbiertos(new Set()); return; }
-    const conHit = new Set();
-    for (const s of seriales) {
-      if (s.hit) conHit.add(`${s.end_date}|${(clienteFinal(s) ?? nombreCuenta(s.customer)) || '—'}`);
-    }
-    setAbiertos(conHit);
+    setAbiertos(new Set(hits.split('\n').filter(Boolean)));
     const timer = setTimeout(() => {
       document.querySelector('[data-hit="true"]')
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 120);
     return () => clearTimeout(timer);
-  }, [q, seriales]);
+  }, [q, hits]);
 
   const grupos = useMemo(() => {
     const porFecha = new Map();
@@ -507,12 +665,19 @@ function TablaEquipos({ seriales, q }) {
               const regiones = [...new Set(regs.map(r => r.region))];
               const esFinal = Boolean(clienteFinal(regs[0]));
               const cuentas = [...new Set(regs.map(r => nombreCuenta(r.customer)))];
+              const c = { key: k, cliente, end_date: g.fecha, regs, ...resumenSeguimiento(regs) };
               return (
                 <div key={k} className="border-t border-white/[0.04]">
                   <button onClick={() => alternar(k)}
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
-                    <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
+                    <span className="font-sans text-white text-sm font-medium truncate max-w-[300px]" title={cliente}>{cliente}</span>
+                    <span title={esFinal ? 'End customer' : 'No end customer in NetSuite: the distributor RealWear invoiced is the contact'}
+                      className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${
+                        esFinal ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
+                      {esFinal ? 'end customer' : 'distributor'}
+                    </span>
+                    <SeguimientoPill c={c} />
                     {regs.some(r => r.end_customer_source === 'sellout') && (
                       <span title={SELLOUT_TITLE}
                         className="font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap bg-accent/15 text-accent">
@@ -523,7 +688,7 @@ function TablaEquipos({ seriales, q }) {
                       title={cuentas.join(', ')}>
                       {esFinal
                         ? `via ${[...new Set(regs.map(r => r.sellout_reseller).filter(Boolean))].concat(cuentas).join(', ')}`
-                        : 'distributor'}
+                        : 'invoiced by RealWear'}
                     </span>
                     <span className="font-mono text-[10px] text-muted whitespace-nowrap">
                       {regs.length} {regs.length === 1 ? 'device' : 'devices'}
@@ -535,6 +700,10 @@ function TablaEquipos({ seriales, q }) {
                       {' · '}{regiones.join('/')}
                     </span>
                   </button>
+                  {abierto && (
+                    <SeguimientoEditor key={`${k}|${c.fuAt ?? ''}|${c.seguimiento}`} c={c}
+                      onGuardar={onGuardar} sinTabla={sinTabla} />
+                  )}
                   {abierto && (
                     <div className="px-4 pb-2.5 pl-10">
                       {planes.length > 0 && (

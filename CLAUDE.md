@@ -149,8 +149,8 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   (Not contacted / Contacted / Quote sent / Renewed / Lost + nota, guarda
   quién y cuándo) en la tabla `subscription_followup` (una fila por serial,
   válida solo para su end_date → la renovación arranca limpia; ver
-  SQL_subscription_followup.sql en la carpeta del pipeline). ES LA ÚNICA
-  TABLA QUE EL SITIO ESCRIBE. "Data gaps" por contrato: sin end customer,
+  SQL_subscription_followup.sql en la carpeta del pipeline). Son las ÚNICAS
+  TABLAS QUE EL SITIO ESCRIBE (esta y `warranty_followup`). "Data gaps" por contrato: sin end customer,
   devices facturados como suscripción que el disti no reportó vendidos,
   nombre distinto Launchpad vs sell-out. Exports de la vista actual: "Export
   for HubSpot" (CSV, una fila por contrato = un deal de renovación, close
@@ -158,6 +158,19 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   (Read me + Contracts + Devices + Software). Probado con datos de prueba en
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
+
+- 14/10/2026: **Warranties con el mismo seguimiento.** Componente compartido
+  `src/components/FollowUp.jsx` (estados, editor, pastilla, filtro, guardar,
+  CSV) usado por Subscriptions y Warranties — cambiar ahí, no copiar. Tabla
+  propia `warranty_followup` (mismo esquema; separada porque un serial puede
+  tener garantía y suscripción con fechas distintas; SQL_warranty_followup.sql).
+  En Warranties: contrato = fecha de fin + cliente (end customer, o la cuenta
+  facturada con badge "distributor"); filtros To renew ≤90d (default) / In
+  warranty / Lapsed ≤90d / All con conteos; filtro de follow-up; KPIs To
+  renew y Lapsed; "Export for HubSpot" (una fila por contrato) y Excel con
+  hoja Contracts + columna Follow-up en Devices. Probado en build local con
+  datos de prueba (ambas páginas, guardar, exports, vistas región/cliente/
+  cobertura sin errores).
 
 - 14/10/2026: página **Device Data Health** (`/data-health`, Support), para
   Dirección/Channel. Universo = seriales del sell-out; por cada uno: ¿se sabe
