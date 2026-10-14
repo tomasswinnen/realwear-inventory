@@ -141,6 +141,24 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   not_found) y la página Sell-out lo muestra en cada serial + KPI "Not
   matching NetSuite".
 
+- 14/10/2026: **Subscriptions rehecha como herramienta de seguimiento de
+  renovaciones.** Unidad = CONTRATO (equipos de un mismo contacto que vencen
+  el mismo día; contacto = end customer → reseller → distributor, con badge
+  de rol). Vistas por momento: To renew ≤90d (default) / All active / Lapsed
+  ≤90d / All, con conteos; filtro por seguimiento. Seguimiento editable
+  (Not contacted / Contacted / Quote sent / Renewed / Lost + nota, guarda
+  quién y cuándo) en la tabla `subscription_followup` (una fila por serial,
+  válida solo para su end_date → la renovación arranca limpia; ver
+  SQL_subscription_followup.sql en la carpeta del pipeline). ES LA ÚNICA
+  TABLA QUE EL SITIO ESCRIBE. "Data gaps" por contrato: sin end customer,
+  devices facturados como suscripción que el disti no reportó vendidos,
+  nombre distinto Launchpad vs sell-out. Exports de la vista actual: "Export
+  for HubSpot" (CSV, una fila por contrato = un deal de renovación, close
+  date = fin; columnas en palabras, se mapean al importar) y "Export Excel"
+  (Read me + Contracts + Devices + Software). Probado con datos de prueba en
+  un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
+  avisa matches fuera de la vista.
+
 - 14/10/2026: página **Device Data Health** (`/data-health`, Support), para
   Dirección/Channel. Universo = seriales del sell-out; por cada uno: ¿se sabe
   el end customer y en qué sistema (NetSuite / Launchpad / solo Excel /

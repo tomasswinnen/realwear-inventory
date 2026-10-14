@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ExpiryChart } from '../components/ExpiryChart';
 import { Link } from 'react-router-dom';
+import { ExpiryChart } from '../components/ExpiryChart';
 import { supabase, paginar } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
@@ -12,36 +12,37 @@ import {
 } from '../utils/warranty';
 import { fetchSelloutMap, selloutDe, SELLOUT_LABEL, SELLOUT_TITLE } from '../utils/sellout';
 
-// Suscripciones — separadas a propósito de Warranties (garantías):
+// Subscriptions = herramienta de SEGUIMIENTO de renovaciones de suscripciones
+// pagas de device (y Device Pro, software). La unidad de trabajo es el
+// CONTRATO: los equipos de un mismo contacto que vencen el mismo día. Es lo que
+// se llama, se cotiza, se renueva, y lo que se exporta a HubSpot como un deal.
 //
-//   · DEVICE: suscripciones PAGAS por equipo, registradas por los resellers en
-//     Launchpad cuando el cliente activa el device (export de Retool →
-//     SSP_reg*.csv en la carpeta del pipeline → tabla launchpad_subs).
-//     Códigos de Launchpad: 2224 = 3 años, 2227 = 2 años, 2228 = 1 año.
-//     La fecha de venta la declara el reseller: el reloj corre desde el uso,
-//     no desde la factura de RealWear.
-//   · SOFTWARE: Device Pro (DEV-PRO-12), que vive en NetSuite como línea de
-//     SO y no se registra en Launchpad. Sin seriales: no cubre hardware.
-//
-// Los registros de garantía estándar (SSP-STANDARD) de Launchpad también se
-// cargan en launchpad_subs pero no se listan acá: son garantía, no suscripción.
+// Fuentes de cada serial (se fusionan por serial; gana la fecha de fin más
+// tardía):
+//   1. Launchpad (launchpad_subs, planes pagos 2224/2227/2228): el reseller
+//      registra el equipo; trae end customer, emails y workspace.
+//   2. Facturas sueltas de NetSuite con fechas de cobertura en la línea
+//      (warranties.start_source = 'invoice' + warranty_serials).
+//   3. Relleno: sell-out del distribuidor (sellout_devices) cuando 1 y 2 no
+//      dicen quién usa el equipo — marcado "per sell-out".
+// Seguimiento: tabla subscription_followup (una fila por serial con estado,
+// nota, quién y cuándo). Vale solo para la fecha de fin con la que se marcó:
+// cuando entra la renovación (nueva fecha), el contrato nuevo arranca "Not
+// contacted" solo.
 
 async function fetchSubs() {
   const traer = async armar => {
     try { return await paginar(armar); } catch { return null; }
   };
-  const [lp, sw, inv, sellout] = await Promise.all([
+  const [lp, sw, inv, sellout, fu] = await Promise.all([
     traer(() => supabase.from('launchpad_subs').select('*')
       .order('end_date', { ascending: false })),
     traer(() => supabase.from('warranties').select('*')
       .eq('sku', 'DEV-PRO-12').order('end_date', { ascending: false })),
-    // Tercera fuente: suscripciones de device facturadas como factura suelta
-    // (Arc 3 / Arc 2 / Navigator anuales, ARIOS...). No pasan por Launchpad;
-    // el pipeline las baja de las lineas de factura con custcol_order_end_date.
     traer(() => supabase.from('warranties').select('*')
       .eq('start_source', 'invoice').order('end_date', { ascending: false })),
-    // Relleno: el sell-out del disti (reseller + end customer por serial).
     fetchSelloutMap(),
+    traer(() => supabase.from('subscription_followup').select('*')),
   ]);
   let invSer = [];
   const facturas = [...new Set((inv ?? []).map(w => w.so_number).filter(Boolean))];
@@ -51,10 +52,7 @@ async function fetchSubs() {
   }
 
   // Distribuidor de cada device de Launchpad: a quién le facturó RealWear ese
-  // serial (serial_shipments.cliente). Launchpad no lo sabe — su "reseller" es
-  // quien registró el equipo, que muchas veces es RealWear mismo — y sin esto
-  // la fila decía "distributor unknown" aunque el dato estuviera en la base.
-  // Lotes de 100: el IN de PostgREST va en la URL y tiene tope de largo.
+  // serial (serial_shipments.cliente). Lotes de 100 (el IN va en la URL).
   const seriales = [...new Set((lp ?? [])
     .filter(r => r.plan_code !== 'SSP-STANDARD')
     .map(r => r.serial).filter(Boolean))];
@@ -67,8 +65,6 @@ async function fetchSubs() {
       .in('serial', lote))));
   for (const ev of eventos.flat()) {
     if (!ev?.cliente) continue;
-    // Se queda el evento más reciente; a igual fecha gana el fulfillment,
-    // que es el que lleva la SO.
     const prev = envios[ev.serial];
     const mejor = !prev
       || ev.fecha > prev.fecha
@@ -76,12 +72,13 @@ async function fetchSubs() {
     if (mejor) envios[ev.serial] = ev;
   }
 
-  return { lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, envios, sellout, falta: lp === null };
+  return {
+    lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, envios, sellout,
+    fu: fu ?? [], fuFalta: fu === null, falta: lp === null,
+  };
 }
 
-// Fila de factura -> misma forma que una fila de Launchpad, para que el
-// agrupado, los KPIs y el grafico las traten igual. El device sale del item
-// ("127033 - Non-Inventory RealWear Arc 3" -> 127033).
+// Fila de factura -> misma forma que una fila de Launchpad.
 function filaDesdeFactura(s, planPorFactura) {
   const w = planPorFactura.get(s.so_number) ?? {};
   const m = /^(\d{6}\S*)/.exec(s.sku ?? '');
@@ -100,53 +97,235 @@ function filaDesdeFactura(s, planPorFactura) {
   };
 }
 
-const FILTROS = {
-  vigentes: { label: 'Active', test: e => e === 'active' || e === 'expiring' },
-  porvencer: { label: `Expiring ≤${DIAS_POR_VENCER}d`, test: e => e === 'expiring' },
-  vencidas: { label: 'Expired', test: e => e === 'expired' },
-  todas: { label: 'All', test: () => true },
+const norm = s => (s ?? '').trim().toUpperCase();
+const mismo = (a, b) => (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+const uniq = xs => [...new Set(xs.filter(Boolean))];
+
+// Momento del contrato según su fecha de fin.
+function estadoContrato(end) {
+  const d = diasHasta(end);
+  if (d == null) return 'old';
+  if (d > DIAS_POR_VENCER) return 'active';
+  if (d > 0) return 'renew';
+  if (d > -DIAS_POR_VENCER) return 'lapsed';
+  return 'old';
+}
+const ESTADO_C = {
+  renew: { label: 'Renewal window', cls: 'text-warning' },
+  active: { label: 'Active', cls: 'text-white' },
+  lapsed: { label: 'Lapsed', cls: 'text-danger' },
+  old: { label: 'Expired', cls: 'text-muted' },
 };
 
+const VISTAS = {
+  renew: { label: `To renew ≤${DIAS_POR_VENCER}d`, test: e => e === 'renew' },
+  active: { label: 'All active', test: e => e === 'renew' || e === 'active' },
+  lapsed: { label: `Lapsed ≤${DIAS_POR_VENCER}d`, test: e => e === 'lapsed' },
+  all: { label: 'All', test: () => true },
+};
+
+// Estados de seguimiento (lo que el equipo marca a mano).
+const SEGUIMIENTO = {
+  open: { label: 'Not contacted', cls: 'bg-white/[0.07] text-slate-300' },
+  contacted: { label: 'Contacted', cls: 'bg-accent/15 text-accent' },
+  quoted: { label: 'Quote sent', cls: 'bg-accent/25 text-white' },
+  renewed: { label: 'Renewed', cls: 'bg-success/15 text-success' },
+  lost: { label: 'Lost', cls: 'bg-danger/15 text-danger' },
+};
+const segLabel = s => SEGUIMIENTO[s]?.label ?? (s === 'mixed' ? 'Mixed' : s);
+
+// Nombre del contrato = a quién llamar: end customer; si no hay, reseller;
+// si no, distributor.
+export function nombreGrupo(r) {
+  const c = (r.customer ?? '').trim();
+  if (c) return c;
+  const res = (r.reseller ?? '').trim();
+  if (res && res.toLowerCase() !== 'admin') return res;
+  const d = (r.distributor ?? '').trim();
+  if (d && d !== 'unknown') return d;
+  return 'contact not recorded';
+}
+
+function armarContrato(c) {
+  const regs = c.regs;
+  const r0 = regs[0];
+  const resellerOk = x => x && x.toLowerCase() !== 'admin';
+  const rol = (r0.customer ?? '').trim() ? 'end customer'
+    : resellerOk((r0.reseller ?? '').trim()) ? 'reseller'
+    : (r0.distributor && r0.distributor !== 'unknown') ? 'distributor' : null;
+  const deSellout = rol === 'end customer' ? regs.some(r => r.customer_source === 'sellout')
+    : rol === 'reseller' ? regs.some(r => r.reseller_source === 'sellout') : false;
+  const estadosFu = uniq(regs.map(r => r.fu?.status ?? 'open'));
+  const ultimo = regs.map(r => r.fu).filter(Boolean)
+    .sort((a, b) => ((a.updated_at ?? '') < (b.updated_at ?? '') ? 1 : -1))[0] ?? null;
+  const modelos = [...regs.reduce((m, r) => {
+    const d = r.device ?? '?';
+    m.set(d, (m.get(d) ?? 0) + 1);
+    return m;
+  }, new Map()).entries()].sort((a, b) => b[1] - a[1])
+    .map(([d, n]) => (n > 1 ? `${d} ×${n}` : d));
+  const serials = uniq(regs.map(r => r.serial)).sort();
+  return {
+    ...c,
+    id: `SUB-${c.end_date}-${serials[0] ?? 'x'}`,
+    estado: estadoContrato(c.end_date),
+    dias: diasHasta(c.end_date),
+    rol, deSellout,
+    endCustomer: rol === 'end customer' ? c.nombre : '',
+    resellers: uniq(regs.map(r => r.reseller)).filter(resellerOk),
+    distribuidores: uniq(regs.map(r => r.distributor)).filter(d => d !== 'unknown' && d !== '—'),
+    originales: uniq(regs.map(r => r.original_customer)),
+    fuentes: uniq(regs.flatMap(r => r.sources ?? ['launchpad'])),
+    sos: uniq(regs.map(r => r.so_number)).sort(),
+    emails: uniq(regs.map(r => r.customer_email)),
+    resellerEmails: uniq(regs.map(r => r.reseller_email)),
+    workspaces: uniq(regs.map(r => r.customer_workspace)),
+    registros: uniq(regs.map(r => r.submitted)).sort(),
+    ventas: uniq(regs.map(r => r.date_of_sale)).sort(),
+    planes: uniq(regs.map(r => (r.plan_years ? `${r.plan_years}y` : null))),
+    modelos, serials,
+    devices: serials.length,
+    renovados: regs.filter(r => r.renovado).length,
+    noReportados: regs.filter(r => r.noReportado).length,
+    mismatches: regs.filter(r => r.mismatch),
+    seguimiento: estadosFu.length === 1 ? estadosFu[0] : 'mixed',
+    nota: ultimo?.note ?? '',
+    fuBy: ultimo?.updated_by ?? null,
+    fuAt: ultimo?.updated_at ?? null,
+  };
+}
+
+// Qué le falta a un contrato, en palabras (para la pantalla y los exports).
+function banderas(c) {
+  const out = [];
+  if (c.rol !== 'end customer') out.push('end customer unknown');
+  if (c.deSellout) out.push(`${c.rol} name taken from the distributor sell-out report`);
+  if (c.noReportados) out.push(`${c.noReportados} device(s) not reported sold by the distributor`);
+  for (const r of c.mismatches) out.push(`${r.serial}: Launchpad "${r.customer}" vs sell-out "${r.sellout?.end_customer}"`);
+  return out;
+}
+
 function coincide(r, q) {
-  if (!q) return true;
   const t = q.toLowerCase();
-  return [r.serial, r.customer, r.customer_email, r.reseller, r.distributor, r.so_number, r.end_customer, r.plan_code]
+  return [r.serial, r.customer, r.customer_email, r.reseller, r.reseller_email, r.distributor,
+          r.so_number, r.plan_code, r.device]
     .some(v => (v ?? '').toLowerCase().includes(t));
 }
 
-async function exportarExcel(devices, software) {
+// ── Exports ─────────────────────────────────────────────────────────────────
+// Una fila por contrato = un deal de renovación en HubSpot. Encabezados en
+// palabras: al importar en HubSpot se mapean a mano (Deal name, Close date,
+// Pipeline; End customer → end_customer, Distributor → distributor__synced_test,
+// Reseller → reseller__synced_test).
+function filaContrato(c) {
+  return {
+    'Deal name': `Renewal – ${c.nombre} – ${c.devices} device${c.devices === 1 ? '' : 's'} – ends ${c.end_date}`,
+    'Pipeline': 'Sales Pipeline',
+    'Close date': c.end_date,
+    'Amount': '',
+    'Follow-up status': segLabel(c.seguimiento),
+    'Follow-up note': c.nota,
+    'Contact (who to call)': c.nombre,
+    'Contact role': c.rol ?? 'unknown',
+    'End customer': c.endCustomer,
+    'End customer source': c.rol === 'end customer' ? (c.deSellout ? 'distributor sell-out report' : 'Launchpad / NetSuite') : '',
+    'Reseller': c.resellers.join('; '),
+    'Distributor': c.distribuidores.join('; '),
+    'Customer email': c.emails.join('; '),
+    'Reseller email': c.resellerEmails.join('; '),
+    'Devices': c.devices,
+    'Device models': c.modelos.join('; '),
+    'Plan': c.planes.join('/'),
+    'Start date': c.ventas[0] ?? '',
+    'End date': c.end_date,
+    'Days left': c.dias,
+    'Status': ESTADO_C[c.estado].label,
+    'Source': c.fuentes.map(f => (f === 'invoice' ? 'NetSuite invoice' : 'Launchpad')).join(' + '),
+    'NetSuite SO / invoice': c.sos.join('; '),
+    'Serial numbers': c.serials.join('; '),
+    'Data gaps': banderas(c).join('; '),
+    'Contract ID': c.id,
+  };
+}
+
+function descargarCSV(filas, nombre) {
+  const cols = Object.keys(filas[0] ?? { 'No contracts': '' });
+  const esc = v => {
+    const s = String(v ?? '');
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const txt = [cols.map(esc).join(','), ...filas.map(f => cols.map(c => esc(f[c])).join(','))].join('\r\n');
+  const url = URL.createObjectURL(new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = nombre;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+async function exportarExcel(contratos, software) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
-  const ordenadas = [...devices].sort((a, b) =>
-    (a.end_date < b.end_date ? -1 : a.end_date > b.end_date ? 1 : (a.customer ?? '').localeCompare(b.customer ?? '') || (a.serial < b.serial ? -1 : 1)));
-  const ws1 = XLSX.utils.json_to_sheet(ordenadas.map(r => ({
-    'Subscription end': r.end_date,
-    'Days left': Math.max(0, diasHasta(r.end_date) ?? 0),
-    'End customer': r.customer,
-    'End customer source': r.customer_source === 'sellout' ? 'distributor sell-out report' : (r.customer ? 'NetSuite / Launchpad' : ''),
+  const ws0 = XLSX.utils.aoa_to_sheet([
+    ['RealWear subscriptions — export of ' + HOY()],
+    [],
+    ['Contracts', 'One row per contract = the devices of one contact that end on the same day. One renewal deal each (same columns as the HubSpot CSV).'],
+    ['Devices', 'One row per serial, with its contract ID.'],
+    ['Software', 'Device Pro (DEV-PRO-12) from NetSuite; no serials.'],
+    [],
+    ['Contact (who to call)', 'End customer if known; otherwise the reseller; otherwise the distributor RealWear invoiced. "Contact role" says which.'],
+    ['End customer source', '"Launchpad / NetSuite" = registered in a system. "distributor sell-out report" = only known from the Channel Ops sell-out Excel.'],
+    ['Source', 'Launchpad = registered by the reseller. NetSuite invoice = sold as a subscription SKU with coverage dates on the invoice line, never registered in Launchpad.'],
+    ['Status', `Renewal window = ends within ${DIAS_POR_VENCER} days. Lapsed = ended in the last ${DIAS_POR_VENCER} days. Expired = earlier.`],
+    ['Follow-up status', 'Set by the team on the site: Not contacted / Contacted / Quote sent / Renewed / Lost.'],
+    ['Data gaps', 'What is missing or inconsistent for that contract (unknown end customer, devices the distributor has not reported as sold, customer name mismatch).'],
+  ]);
+  ws0['!cols'] = [{ wch: 22 }, { wch: 120 }];
+  XLSX.utils.book_append_sheet(wb, ws0, 'Read me');
+
+  const ws1 = XLSX.utils.json_to_sheet(contratos.map(filaContrato));
+  ws1['!cols'] = [{ wch: 50 }, { wch: 14 }, { wch: 11 }, { wch: 8 }, { wch: 14 }, { wch: 30 }, { wch: 30 },
+                  { wch: 13 }, { wch: 28 }, { wch: 22 }, { wch: 24 }, { wch: 24 }, { wch: 28 }, { wch: 28 },
+                  { wch: 7 }, { wch: 22 }, { wch: 6 }, { wch: 11 }, { wch: 11 }, { wch: 8 }, { wch: 14 },
+                  { wch: 18 }, { wch: 16 }, { wch: 40 }, { wch: 40 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Contracts');
+
+  const ws2 = XLSX.utils.json_to_sheet(contratos.flatMap(c => c.regs.map(r => ({
+    'Contract ID': c.id,
     'Serial': r.serial, 'Device': r.device ?? '',
+    'Contact (who to call)': c.nombre, 'Contact role': c.rol ?? 'unknown',
+    'End customer': r.customer ?? '',
+    'End customer source': r.customer ? (r.customer_source === 'sellout' ? 'distributor sell-out report' : 'Launchpad / NetSuite') : '',
+    'Reseller': r.reseller ?? '', 'Distributor': r.distributor ?? '',
+    'Customer email': r.customer_email ?? '', 'Reseller email': r.reseller_email ?? '',
+    'Plan': r.plan_years ? `${r.plan_years}y` : '', 'Plan code': r.plan_code ?? '',
+    'Start date': r.date_of_sale ?? '', 'End date': r.end_date,
+    'Days left': diasHasta(r.end_date), 'Status': ESTADO_C[estadoContrato(r.end_date)].label,
+    'Follow-up status': segLabel(r.fu?.status ?? 'open'),
     'Source': (r.sources ?? ['launchpad']).map(s => (s === 'invoice' ? 'NetSuite invoice' : 'Launchpad')).join(' + '),
-    'Plan': `${r.plan_years}y (code ${r.plan_code})`,
-    'Date of sale': r.date_of_sale,
-    'Status': estadoGarantia(r.end_date),
-    'Customer email': r.customer_email, 'Workspace': r.customer_workspace,
-    'Reseller': r.reseller, 'Distributor': r.distributor ?? '',
-    'Original customer': r.original_customer ?? '', 'Registered': r.submitted,
-    'Renewed': r.renovado ? 'yes' : '',
-  })));
-  ws1['!cols'] = [{ wch: 14 }, { wch: 9 }, { wch: 32 }, { wch: 22 }, { wch: 19 }, { wch: 12 },
-                  { wch: 15 }, { wch: 12 }, { wch: 9 }, { wch: 30 }, { wch: 18 },
-                  { wch: 18 }, { wch: 28 }, { wch: 28 }, { wch: 12 }, { wch: 8 }];
-  XLSX.utils.book_append_sheet(wb, ws1, 'Device subscriptions');
-  const ws2 = XLSX.utils.json_to_sheet(software.map(r => ({
+    'NetSuite SO / invoice': r.so_number ?? '',
+    'Renewed before': r.renovado ? 'yes' : '',
+    'Not reported sold by distributor': r.noReportado ? 'yes' : '',
+    'Sell-out end customer': r.sellout?.end_customer ?? '',
+    'Sell-out reseller': r.sellout?.reseller ?? '',
+    'Sell-out date sold': r.sellout?.date_sold ?? '',
+  }))));
+  ws2['!cols'] = [{ wch: 30 }, { wch: 19 }, { wch: 10 }, { wch: 30 }, { wch: 13 }, { wch: 28 }, { wch: 22 },
+                  { wch: 24 }, { wch: 24 }, { wch: 28 }, { wch: 28 }, { wch: 6 }, { wch: 14 }, { wch: 11 },
+                  { wch: 11 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 9 },
+                  { wch: 12 }, { wch: 28 }, { wch: 24 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Devices');
+
+  const ws3 = software.length === 0
+    ? XLSX.utils.aoa_to_sheet([['No Device Pro plans in this view']])
+    : XLSX.utils.json_to_sheet(software.map(r => ({
     'SO': r.so_number, 'Customer': nombreCuenta(r.customer),
     'Plan': 'Device Pro · 12 months', 'Start': r.start_date, 'End': r.end_date,
-    'Days left': Math.max(0, diasHasta(r.end_date) ?? 0),
+    'Days left': diasHasta(r.end_date),
     'Status': estadoGarantia(r.end_date),
   })));
-  ws2['!cols'] = [{ wch: 11 }, { wch: 38 }, { wch: 22 }, { wch: 12 }, { wch: 12 },
-                  { wch: 9 }, { wch: 9 }];
-  XLSX.utils.book_append_sheet(wb, ws2, 'Software subscriptions');
+  ws3['!cols'] = [{ wch: 11 }, { wch: 38 }, { wch: 22 }, { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 9 }];
+  XLSX.utils.book_append_sheet(wb, ws3, 'Software');
+
   XLSX.writeFile(wb, `subscriptions_${HOY()}.xlsx`);
 }
 
@@ -162,27 +341,26 @@ function Badge({ end }) {
   );
 }
 
-
+// ── Página ──────────────────────────────────────────────────────────────────
 export function Subscriptions() {
   const [q, setQ] = useState('');
-  const [filtro, setFiltro] = useState('vigentes');
+  const [filtro, setFiltro] = useState('renew');
+  const [seg, setSeg] = useState('any');
   const [vista, setVista] = useState('devices');
   const [exportando, setExportando] = useState(false);
+  // Seguimientos guardados en esta sesión (para no recargar todo al guardar)
+  const [fuLocal, setFuLocal] = useState(() => new Map());
   const { data, loading, error, refetch } = useQuery(fetchSubs, []);
 
   const v = useMemo(() => {
     if (!data) return null;
-    // Suscripciones de device = planes PAGOS de Launchpad + facturas sueltas
-    // de NetSuite. Un serial en las dos fuentes es UNA fila: queda la fecha de
-    // fin mas tardia y se marcan ambas fuentes.
+    // 1) Una fila por serial y fecha de fin: Launchpad pagas + facturas.
     const lpPagas = data.lp.filter(r => r.plan_code !== 'SSP-STANDARD')
       .map(r => {
         const env = data.envios?.[r.serial];
         return {
           ...r,
           sources: ['launchpad'],
-          // Distribuidor y SO desde el envío del serial (NetSuite). Si el
-          // serial nunca se despachó desde acá, queda sin dato — no se inventa.
           distributor: r.distributor || (env ? nombreCuenta(env.cliente) : null),
           so_number: r.so_number || env?.so_number || null,
         };
@@ -190,14 +368,14 @@ export function Subscriptions() {
     const planPorFactura = new Map(data.inv.map(w => [w.so_number, w]));
     const deFactura = data.invSer.map(s => filaDesdeFactura(s, planPorFactura));
     const porSerialFact = new Map(deFactura.map(r => [r.serial, r]));
-    const pagasTodo = [];
+    const filas = [];
     const vistos = new Set();
     for (const r of lpPagas) {
       const f = porSerialFact.get(r.serial);
       if (f) {
         vistos.add(r.serial);
         const gana = f.end_date > r.end_date ? f : r;
-        pagasTodo.push({
+        filas.push({
           ...gana,
           customer: r.customer || f.customer,
           customer_email: r.customer_email, customer_workspace: r.customer_workspace,
@@ -208,59 +386,132 @@ export function Subscriptions() {
           id: r.id, sources: ['launchpad', 'invoice'],
         });
       } else {
-        pagasTodo.push(r);
+        filas.push(r);
       }
     }
-    for (const f of deFactura) if (!vistos.has(f.serial)) pagasTodo.push(f);
-    // Relleno con el sell-out: si ni NetSuite ni Launchpad dicen quién usa el
-    // equipo, vale lo que reportó el distribuidor (end customer y reseller),
-    // marcado como tal. NetSuite/Launchpad siempre ganan cuando tienen dato.
+    for (const f of deFactura) if (!vistos.has(f.serial)) filas.push(f);
+
+    // 2) Relleno con el sell-out, banderas y seguimiento por serial.
+    const fuPor = new Map(data.fu.map(f => [norm(f.serial), f]));
+    for (const [k, f] of fuLocal) fuPor.set(k, f);
     let rellenados = 0;
-    for (const r of pagasTodo) {
+    for (const r of filas) {
       const so = selloutDe(data.sellout, r.serial);
-      if (!so) continue;
-      if (!(r.customer ?? '').trim() && so.end_customer) {
-        r.customer = so.end_customer; r.customer_source = 'sellout'; rellenados += 1;
+      r.sellout = so;
+      if (so) {
+        if (!(r.customer ?? '').trim() && so.end_customer) {
+          r.customer = so.end_customer; r.customer_source = 'sellout'; rellenados += 1;
+        }
+        if (!(r.reseller ?? '').trim() && so.reseller) {
+          r.reseller = so.reseller; r.reseller_source = 'sellout';
+        }
+        if (!r.distributor && so.distributor) r.distributor = so.distributor;
       }
-      if (!(r.reseller ?? '').trim() && so.reseller) {
-        r.reseller = so.reseller; r.reseller_source = 'sellout';
-      }
-      if (!r.distributor && so.distributor) r.distributor = so.distributor;
+      const e = estadoContrato(r.end_date);
+      // Facturado como suscripción, el plazo corre, y el disti no lo reportó vendido
+      r.noReportado = (r.sources ?? []).includes('invoice') && !so && (e === 'renew' || e === 'active');
+      r.mismatch = Boolean(so?.end_customer && r.customer && r.customer_source !== 'sellout'
+        && !mismo(so.end_customer, r.customer));
+      const f = fuPor.get(norm(r.serial));
+      r.fu = f && f.end_date === r.end_date ? f : null;
     }
-    const porSerial = new Map();
-    for (const r of pagasTodo) porSerial.set(r.serial, (porSerial.get(r.serial) ?? 0) + 1);
-    for (const r of pagasTodo) r.renovado = porSerial.get(r.serial) > 1;
+    const veces = new Map();
+    for (const r of filas) veces.set(r.serial, (veces.get(r.serial) ?? 0) + 1);
+    for (const r of filas) r.renovado = veces.get(r.serial) > 1;
 
-    const test = FILTROS[filtro].test;
-    // Searching keeps context: groups (end date + customer) with a match stay
-    // WHOLE — every sibling serial visible — and the matches get highlighted,
-    // instead of stripping the serial out of its surroundings.
-    const base = pagasTodo.filter(r => test(estadoGarantia(r.end_date)));
-    // Searching NEVER removes rows: the whole ledger stays in place, the
-    // matches get flagged (yellow) and the table scrolls to the first one.
-    const devices = q ? base.map(r => ({ ...r, hit: coincide(r, q) })) : base;
-    const baseSw = data.sw.filter(r => test(estadoGarantia(r.end_date)));
-    const software = q ? baseSw.map(r => ({ ...r, hit: coincide(r, q) })) : baseSw;
+    // 3) Contratos: mismo contacto + misma fecha de fin.
+    const porClave = new Map();
+    for (const r of filas) {
+      const nombre = nombreGrupo(r);
+      const key = `${r.end_date}|${nombre}`;
+      if (!porClave.has(key)) porClave.set(key, { key, end_date: r.end_date, nombre, regs: [] });
+      porClave.get(key).regs.push(r);
+    }
+    const contratos = [...porClave.values()].map(armarContrato)
+      .sort((a, b) => (a.end_date < b.end_date ? -1 : a.end_date > b.end_date ? 1 : b.devices - a.devices));
 
-    const vig = pagasTodo.filter(r => estadoGarantia(r.end_date) !== 'expired');
+    // 4) Vista: momento (fecha) + estado de seguimiento. Buscar NUNCA filtra:
+    //    marca los matches y la tabla abre su contrato y scrollea.
+    const testFecha = VISTAS[filtro].test;
+    const enFecha = contratos.filter(c => testFecha(c.estado));
+    const base = enFecha.filter(c => seg === 'any' || c.seguimiento === seg);
+    const enVista = q
+      ? base.map(c => {
+        const regs = c.regs.map(r => ({ ...r, hit: coincide(r, q) }));
+        return { ...c, regs, hit: regs.some(r => r.hit) || c.nombre.toLowerCase().includes(q.toLowerCase()) };
+      })
+      : base;
+    const enVistaKeys = new Set(base.map(c => c.key));
+    const fuera = q
+      ? contratos.filter(c => !enVistaKeys.has(c.key)
+        && (c.regs.some(r => coincide(r, q)) || c.nombre.toLowerCase().includes(q.toLowerCase()))).length
+      : 0;
+
+    const conteoFecha = Object.fromEntries(Object.entries(VISTAS)
+      .map(([k, f]) => [k, contratos.filter(c => f.test(c.estado)).length]));
+    const conteoSeg = { any: enFecha.length };
+    for (const c of enFecha) conteoSeg[c.seguimiento] = (conteoSeg[c.seguimiento] ?? 0) + 1;
+
+    // KPIs: siempre sobre el total (no sobre la vista).
+    const act = contratos.filter(c => c.estado === 'renew' || c.estado === 'active');
+    const ren = contratos.filter(c => c.estado === 'renew');
+    const lap = contratos.filter(c => c.estado === 'lapsed');
+    const devs = cs => cs.reduce((s, c) => s + c.devices, 0);
     const kpi = {
-      devicesVig: new Set(vig.map(r => r.serial)).size,
-      subsVig: vig.length,
-      porVencer: vig.filter(r => estadoGarantia(r.end_date) === 'expiring').length,
-      clientes: new Set(vig.map(r => (r.customer ?? '').trim()).filter(Boolean)).size,
-      swVig: data.sw.filter(r => estadoGarantia(r.end_date) !== 'expired').length,
-      estandar: data.lp.length - pagasTodo.length,
+      devicesAct: new Set(act.flatMap(c => c.serials)).size,
+      contratosAct: act.length,
+      clientesAct: new Set(act.filter(c => c.rol === 'end customer').map(c => c.nombre.toLowerCase())).size,
+      renew: ren.length, renewDev: devs(ren),
+      renewOpen: ren.filter(c => c.seguimiento === 'open').length,
+      lapsed: lap.length, lapsedDev: devs(lap),
+      lapsedOpen: lap.filter(c => c.seguimiento !== 'renewed' && c.seguimiento !== 'lost').length,
+      sinEC: act.filter(c => c.rol !== 'end customer').length,
+      conGaps: act.filter(c => c.rol !== 'end customer' || c.noReportados || c.mismatches.length).length,
+      noRep: act.reduce((s, c) => s + c.noReportados, 0),
+      mismatch: act.reduce((s, c) => s + c.mismatches.length, 0),
       rellenados,
+      swVig: data.sw.filter(r => estadoGarantia(r.end_date) !== 'expired').length,
+      estandar: data.lp.filter(r => r.plan_code === 'SSP-STANDARD').length,
     };
-    return { devices, software, kpi, pagasTodo };
-  }, [data, q, filtro]);
+    const software = data.sw.filter(r => {
+      const e = estadoContrato(r.end_date);
+      return testFecha(e);
+    });
+    return { filas, contratos, enVista, base, fuera, conteoFecha, conteoSeg, kpi, software };
+  }, [data, q, filtro, seg, fuLocal]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
-  const exportar = async () => {
+  const guardar = async (c, estado, nota) => {
+    const { data: u } = await supabase.auth.getUser();
+    const by = u?.user?.email ?? null;
+    const ahora = new Date().toISOString();
+    const porSerial = new Map();
+    for (const r of c.regs) {
+      porSerial.set(norm(r.serial), {
+        serial: r.serial, end_date: r.end_date, status: estado,
+        note: nota || null, updated_by: by, updated_at: ahora,
+      });
+    }
+    const filas = [...porSerial.values()];
+    const { error: err } = await supabase.from('subscription_followup')
+      .upsert(filas, { onConflict: 'serial' });
+    if (err) throw new Error(err.message);
+    setFuLocal(prev => {
+      const n = new Map(prev);
+      for (const f of filas) n.set(norm(f.serial), f);
+      return n;
+    });
+  };
+
+  const exportarXlsx = async () => {
     if (exportando || !v) return;
     setExportando(true);
-    try { await exportarExcel(v.devices, v.software); } finally { setExportando(false); }
+    try { await exportarExcel(v.base, v.software); } finally { setExportando(false); }
+  };
+  const exportarHubspot = () => {
+    if (!v) return;
+    descargarCSV(v.base.map(filaContrato), `subscriptions_hubspot_${filtro}_${HOY()}.csv`);
   };
 
   return (
@@ -268,19 +519,24 @@ export function Subscriptions() {
       <div>
         <h1 className="text-xl font-sans font-semibold text-white">Subscriptions</h1>
         <p className="text-xs text-muted font-mono mt-0.5">
-          Paid device subscriptions — registered in Launchpad or invoiced directly in NetSuite — and Device Pro software plans. Big name = who to contact; “per sell-out” = taken from the distributor’s report.
+          Renewal tracker for paid device subscriptions (Launchpad + NetSuite invoices) and Device Pro.
+          One row = one contract: the devices of one contact that end on the same day.
         </p>
       </div>
 
       {loading || !v ? <KPISkeleton /> : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KPICard label="Devices subscribed" value={v.kpi.devicesVig.toLocaleString()}
-            sub={`${v.kpi.subsVig} active subscriptions`} accent />
-          <KPICard label="End customers" value={v.kpi.clientes.toLocaleString()}
-            sub={v.kpi.rellenados ? `with an active subscription · ${v.kpi.rellenados} devices named only by sell-out` : 'with an active subscription'} />
-          <KPICard label={`Expiring ≤${DIAS_POR_VENCER}d`} value={v.kpi.porVencer.toLocaleString()}
-            color={v.kpi.porVencer ? 'text-warning' : undefined}
-            sub="renewal window" />
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <KPICard label="Active subscriptions" value={v.kpi.devicesAct.toLocaleString()}
+            sub={`devices · ${v.kpi.contratosAct} contracts · ${v.kpi.clientesAct} end customers`} accent />
+          <KPICard label={`To renew ≤${DIAS_POR_VENCER}d`} value={v.kpi.renew.toLocaleString()}
+            color={v.kpi.renew ? 'text-warning' : undefined}
+            sub={`contracts · ${v.kpi.renewDev} devices · ${v.kpi.renewOpen} not contacted yet`} />
+          <KPICard label={`Lapsed ≤${DIAS_POR_VENCER}d`} value={v.kpi.lapsed.toLocaleString()}
+            color={v.kpi.lapsedOpen ? 'text-danger' : undefined}
+            sub={`contracts · ${v.kpi.lapsedDev} devices · ${v.kpi.lapsedOpen} not marked renewed or lost`} />
+          <KPICard label="Active contracts with data gaps" value={v.kpi.conGaps.toLocaleString()}
+            color={v.kpi.conGaps ? 'text-warning' : undefined}
+            sub={`${v.kpi.sinEC} without end customer · ${v.kpi.noRep} devices not reported sold · ${v.kpi.mismatch} customer name mismatches`} />
           <KPICard label="Software (Device Pro)" value={v.kpi.swVig.toLocaleString()}
             sub="active · from NetSuite" />
         </div>
@@ -288,44 +544,69 @@ export function Subscriptions() {
 
       {v && (
         <ExpiryChart
-          filas={vista === 'software' ? data.sw : v.pagasTodo}
-          titulo={vista === 'software'
-            ? 'Device Pro expirations by month'
-            : 'Device subscription expirations by month'} />
+          filas={vista === 'software' ? data.sw : v.filas}
+          titulo={vista === 'software' ? 'Device Pro expirations by month' : 'Device subscription expirations by month'} />
       )}
 
-      <div className="flex items-center gap-2 flex-wrap">
-        <input
-          type="search"
-          placeholder="Serial, end customer, reseller or SO #…"
-          value={q}
-          onChange={e => setQ(e.target.value)}
-          className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-80"
-        />
-        <div className="flex items-center gap-1 flex-wrap">
-          {Object.entries(FILTROS).map(([k, f]) => (
-            <button key={k} onClick={() => setFiltro(k)}
-              className={`px-2.5 py-1.5 rounded text-[11px] font-mono transition-colors ${
-                filtro === k ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`}>
-              {f.label}
+      {/* Barra: qué momento (fecha), qué estado de seguimiento, buscar, exportar */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 flex-wrap">
+            {Object.entries(VISTAS).map(([k, f]) => (
+              <button key={k} onClick={() => setFiltro(k)}
+                className={`px-2.5 py-1.5 rounded text-[11px] font-mono transition-colors ${
+                  filtro === k ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`}>
+                {f.label}{v ? <span className="opacity-60"> · {v.conteoFecha[k]}</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1 sm:ml-auto">
+            {[['devices', 'Devices'], ['software', 'Software']].map(([k, label]) => (
+              <button key={k} onClick={() => setVista(k)}
+                className={`px-2.5 py-1.5 rounded text-[11px] font-mono border transition-colors ${
+                  vista === k ? 'border-accent/50 text-white' : 'border-white/[0.12] text-muted hover:text-white'}`}>
+                {label}
+              </button>
+            ))}
+            <button onClick={exportarXlsx} disabled={exportando || !v}
+              title="Excel with Read me, Contracts, Devices and Software sheets — for the current view"
+              className="px-3 py-1.5 rounded border border-white/[0.12] text-[11px] font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
+              {exportando ? 'Exporting…' : 'Export Excel'}
             </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-1 sm:ml-auto">
-          {[['devices', 'Devices'], ['software', 'Software']].map(([k, label]) => (
-            <button key={k} onClick={() => setVista(k)}
-              className={`px-2.5 py-1.5 rounded text-[11px] font-mono border transition-colors ${
-                vista === k
-                  ? 'border-accent/50 text-white'
-                  : 'border-white/[0.12] text-muted hover:text-white'}`}>
-              {label}
+            <button onClick={exportarHubspot} disabled={!v || vista !== 'devices'}
+              title="CSV with one row per contract (one renewal deal each), ready to import into HubSpot as Deals — for the current view"
+              className="px-3 py-1.5 rounded border border-accent/40 text-[11px] font-mono text-accent hover:bg-accent/10 disabled:opacity-40 transition-colors whitespace-nowrap">
+              Export for HubSpot{v && vista === 'devices' ? ` (${v.base.length})` : ''}
             </button>
-          ))}
-          <button onClick={exportar} disabled={exportando}
-            className="px-3 py-1.5 rounded border border-white/[0.12] text-[11px] font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
-            {exportando ? 'Exporting…' : 'Export Excel'}
-          </button>
+          </div>
         </div>
+        {vista === 'devices' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="search"
+              placeholder="Serial, customer, reseller, distributor, email or SO #…"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-80"
+            />
+            <span className="text-[10px] font-mono text-muted uppercase tracking-wider">Follow-up</span>
+            {[['any', 'Any'], ...Object.entries(SEGUIMIENTO).map(([k, s]) => [k, s.label]), ['mixed', 'Mixed']]
+              .filter(([k]) => k === 'any' || (v?.conteoSeg[k] ?? 0) > 0 || seg === k)
+              .map(([k, label]) => (
+                <button key={k} onClick={() => setSeg(k)}
+                  className={`px-2 py-1 rounded text-[10px] font-mono transition-colors ${
+                    seg === k ? (SEGUIMIENTO[k]?.cls ?? 'bg-accent/15 text-accent') : 'text-muted hover:text-white'}`}>
+                  {label}{v ? <span className="opacity-60"> · {v.conteoSeg[k] ?? 0}</span> : null}
+                </button>
+              ))}
+            {q && v?.fuera > 0 && (
+              <button onClick={() => { setFiltro('all'); setSeg('any'); }}
+                className="text-[10px] font-mono text-warning underline underline-offset-2">
+                {v.fuera} more match{v.fuera === 1 ? '' : 'es'} outside this view — show all
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {data?.falta && (
@@ -333,28 +614,256 @@ export function Subscriptions() {
           Launchpad table not created yet — run SQL_launchpad.sql in Supabase, then one pipeline run.
         </p>
       )}
+      {data?.fuFalta && (
+        <p className="text-xs font-mono text-warning bg-warning/5 border border-warning/20 rounded px-3 py-2">
+          Follow-up can’t be saved yet: the subscription_followup table doesn’t exist (SQL_subscription_followup.sql).
+        </p>
+      )}
 
       {loading || !v ? <TableSkeleton rows={10} cols={7} /> : (
         <>
-          {vista === 'devices' && <TablaDevices filas={v.devices} q={q} />}
+          {vista === 'devices' && (
+            <TablaContratos contratos={v.enVista} q={q} onGuardar={guardar} sinTabla={data.fuFalta} filtro={filtro} />
+          )}
           {vista === 'software' && <TablaSoftware filas={v.software} />}
 
-          <p className="text-[10px] text-muted font-mono leading-relaxed">
-            Device subscriptions come from Launchpad: the reseller registers each serial when
-            the customer activates it, and declares the date of sale — so coverage runs from
-            first use, not from RealWear’s invoice. Launchpad plan codes: 2224 = 3 years,
-            2227 = 2 years, 2228 = 1 year. “Renewed” marks serials registered more than once.
-            “NetSuite invoice” rows are device subscriptions invoiced directly (Arc 3 / Arc 2 /
-            Navigator annual plans, ARIOS) with the coverage dates on the invoice line — the
-            reseller never registered them in Launchpad, so the end customer is usually not
-            recorded there. Reseller = who registered the device in Launchpad (“registered by RealWear” when it
-            was the admin account); Distributor = the account RealWear invoiced, from NetSuite.
-            Standard 1-year warranty registrations ({v.kpi.estandar.toLocaleString()} of them)
-            are not listed here — warranty coverage lives in the Warranties tab. Software
-            (Device Pro) comes from NetSuite and has no serials because it does not cover hardware.
-          </p>
+          <div className="text-[10px] text-muted font-mono leading-relaxed space-y-1.5">
+            <p className="text-slate-300">How to use it</p>
+            <p>1 · Work the “To renew” list: the big name is who to call (badge says if it’s the end customer, the reseller or the distributor). Open the contract, set Follow-up (Contacted → Quote sent → Renewed / Lost) and leave a note. Everyone sees it.</p>
+            <p>2 · When the renewal arrives (new Launchpad registration or invoice), the contract moves to its new end date and starts again as “Not contacted” — the old status stays with the old period.</p>
+            <p>3 · “Export for HubSpot” = one row per contract (one renewal deal), close date = end date. “Export Excel” = same contracts plus one row per device and Device Pro. Both export the current view.</p>
+            <p className="pt-1">
+              Sources: Launchpad (reseller registers each serial; plan codes 2224 = 3y, 2227 = 2y, 2228 = 1y) and NetSuite invoices with coverage dates on the line (devices sold as a subscription SKU, never registered in Launchpad).
+              When neither names the end customer, the distributor’s sell-out report fills it in, marked “{SELLOUT_LABEL}”.
+              “Not reported sold” = invoiced as a subscription, running, but the distributor hasn’t reported selling it (still in its stock, or a missing report).
+              Standard 1-year warranties ({v.kpi.estandar.toLocaleString()} Launchpad registrations) are in Warranties, not here.
+            </p>
+          </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Tabla de contratos: fecha de fin → contrato → seriales ───────────────────
+function TablaContratos({ contratos, q, onGuardar, sinTabla, filtro }) {
+  // Todo arranca COLAPSADO. Una búsqueda abre solo los contratos con match y
+  // scrollea al primero.
+  const [abiertos, setAbiertos] = useState(() => new Set());
+  // Depende de QUÉ contratos matchean (no del array): guardar un seguimiento
+  // recalcula los contratos y no tiene que cerrar lo que el usuario abrió.
+  const hits = contratos.filter(c => c.hit).map(c => c.key).join('\n');
+  useEffect(() => {
+    if (!q) { setAbiertos(new Set()); return; }
+    setAbiertos(new Set(hits.split('\n').filter(Boolean)));
+    const timer = setTimeout(() => {
+      document.querySelector('[data-hit="true"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [q, hits]);
+
+  const grupos = useMemo(() => {
+    const porFecha = new Map();
+    for (const c of contratos) {
+      if (!porFecha.has(c.end_date)) porFecha.set(c.end_date, []);
+      porFecha.get(c.end_date).push(c);
+    }
+    const lista = [...porFecha.entries()].map(([fecha, cs]) => ({
+      fecha, cs, total: cs.reduce((s, c) => s + c.devices, 0),
+    }));
+    // Lo vencido se lee del más reciente al más viejo; lo vigente, al revés.
+    return lista.sort((a, b) => (filtro === 'lapsed'
+      ? (a.fecha < b.fecha ? 1 : -1)
+      : (a.fecha < b.fecha ? -1 : 1)));
+  }, [contratos, filtro]);
+
+  const alternar = k => setAbiertos(prev => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
+
+  if (grupos.length === 0) {
+    return (
+      <div className="bg-card rounded-lg border border-white/[0.08] px-4 py-8 text-center text-muted font-mono text-xs">
+        Nothing in this view
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end gap-1">
+        <button onClick={() => setAbiertos(new Set(contratos.map(c => c.key)))}
+          className="px-2.5 py-1 rounded border border-white/[0.12] text-[10px] font-mono text-muted hover:text-white hover:border-accent/50 transition-colors">
+          Expand all
+        </button>
+        <button onClick={() => setAbiertos(new Set())}
+          className="px-2.5 py-1 rounded border border-white/[0.12] text-[10px] font-mono text-muted hover:text-white hover:border-accent/50 transition-colors">
+          Collapse all
+        </button>
+      </div>
+      {(q ? grupos : grupos.slice(0, 80)).map(g => {
+        const est = estadoContrato(g.fecha);
+        const dias = diasHasta(g.fecha);
+        return (
+          <div key={g.fecha} className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+            <div className="flex items-baseline gap-3 px-4 py-2.5 border-b border-white/[0.06] bg-white/[0.02]">
+              <span className={`font-mono font-semibold text-sm ${ESTADO_C[est].cls}`}>{g.fecha}</span>
+              <span className={`font-mono text-[11px] ${ESTADO_C[est].cls} opacity-80`}>
+                {dias > 0 ? `in ${dias}d` : dias === 0 ? 'today' : `${-dias}d ago`}
+              </span>
+              <span className="ml-auto font-mono text-[11px] text-muted">
+                {g.total} {g.total === 1 ? 'device' : 'devices'} · {g.cs.length} {g.cs.length === 1 ? 'contract' : 'contracts'}
+              </span>
+            </div>
+            {g.cs.map(c => (
+              <FilaContrato key={c.key} c={c} abierto={abiertos.has(c.key)} onToggle={() => alternar(c.key)}
+                onGuardar={onGuardar} sinTabla={sinTabla} />
+            ))}
+          </div>
+        );
+      })}
+      {!q && grupos.length > 80 && (
+        <p className="text-[10px] text-muted font-mono">
+          Showing the first 80 of {grupos.length} end dates — narrow the view or use Export Excel.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const ROL_STYLE = {
+  'end customer': 'bg-success/15 text-success',
+  reseller: 'bg-warning/15 text-warning',
+  distributor: 'bg-warning/15 text-warning',
+};
+const ROL_TITLE = {
+  'end customer': 'End customer registered in Launchpad / NetSuite',
+  reseller: 'No end customer recorded: the reseller is the contact',
+  distributor: 'No end customer recorded: the distributor RealWear invoiced is the contact',
+};
+
+function FilaContrato({ c, abierto, onToggle, onGuardar, sinTabla }) {
+  const gaps = banderas(c).filter(b => b !== 'end customer unknown' && !b.includes('sell-out report'));
+  return (
+    <div className="border-b border-white/[0.04] last:border-b-0">
+      <button onClick={onToggle} data-hit={c.hit && !(abierto && c.regs.some(r => r.hit)) ? 'true' : undefined}
+        className={`w-full flex items-center gap-2.5 px-4 py-2 text-left transition-colors ${
+          c.hit ? 'bg-warning/[0.06] hover:bg-warning/10' : 'hover:bg-white/[0.03]'}`}>
+        <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
+        <span className="font-sans text-white text-sm font-medium truncate max-w-[300px]" title={c.nombre}>{c.nombre}</span>
+        {c.rol && (
+          <span title={c.deSellout ? SELLOUT_TITLE : ROL_TITLE[c.rol]}
+            className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${
+              c.deSellout ? 'bg-accent/15 text-accent' : ROL_STYLE[c.rol]}`}>
+            {c.rol}{c.deSellout ? ` · ${SELLOUT_LABEL}` : ''}
+          </span>
+        )}
+        <span title={c.fuAt ? `${segLabel(c.seguimiento)} — ${c.fuBy ?? '?'} · ${c.fuAt.slice(0, 10)}${c.nota ? `\n${c.nota}` : ''}` : 'No follow-up yet'}
+          className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${SEGUIMIENTO[c.seguimiento]?.cls ?? 'bg-white/[0.07] text-slate-300'}`}>
+          {segLabel(c.seguimiento)}
+        </span>
+        <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[340px] text-muted"
+          title={`Reseller: ${c.resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear): ${c.distribuidores.join(', ') || 'unknown'}${c.originales.length ? `\nOriginal customer: ${c.originales.join(', ')}` : ''}${c.sos.length ? `\nNetSuite SO / invoice: ${c.sos.join(', ')}` : ''}`}>
+          {c.fuentes.map(f => (
+            <span key={f} className={`font-mono text-[9px] px-1.5 py-0.5 rounded mr-1.5 ${
+              f === 'invoice' ? 'bg-accent/15 text-accent' : 'bg-white/[0.07] text-slate-300'}`}>
+              {f === 'invoice' ? 'Invoice' : 'Launchpad'}
+            </span>
+          ))}
+          {c.rol === 'end customer' && c.resellers.length > 0 && <>reseller <span className="text-accent/80">{c.resellers.join(', ')}</span> · </>}
+          {c.rol !== 'distributor' && <>distributor <span className="text-accent/80">{c.distribuidores.join(', ') || 'unknown'}</span></>}
+          {c.rol === 'distributor' && <>invoiced by RealWear{c.sos.length > 0 && <> · <span className="text-accent/80">{c.sos.slice(0, 3).join(', ')}{c.sos.length > 3 ? ` +${c.sos.length - 3}` : ''}</span></>}</>}
+        </span>
+        <span className="font-mono text-[10px] text-muted whitespace-nowrap">
+          {c.devices} {c.devices === 1 ? 'device' : 'devices'}{c.planes.length > 0 && ` · ${c.planes.join('/')}`}
+          {' · '}<span className="text-slate-300">start {c.ventas[0]}{c.ventas.length > 1 ? ` … ${c.ventas[c.ventas.length - 1]}` : ''}</span>
+        </span>
+        {gaps.length > 0 && (
+          <span title={gaps.join('\n')} className="font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap bg-warning/15 text-warning">
+            {gaps.length} gap{gaps.length === 1 ? '' : 's'}
+          </span>
+        )}
+        <span className="font-mono text-[10px] text-muted truncate max-w-[200px] hidden xl:inline ml-auto" title={c.modelos.join(', ')}>
+          {c.modelos.slice(0, 3).join(' · ')}{c.modelos.length > 3 ? ` +${c.modelos.length - 3}` : ''}
+        </span>
+      </button>
+      {abierto && (
+        <div className="pb-2.5">
+          <p className="px-4 pl-10 pt-1 pb-1.5 text-[10px] font-mono text-muted">
+            {c.emails.length > 0 ? <>customer <span className="text-slate-300 select-all">{c.emails.join(', ')}</span></> : 'no customer email'}
+            {c.resellerEmails.length > 0 && <> · reseller <span className="text-slate-300 select-all">{c.resellerEmails.join(', ')}</span></>}
+            {c.workspaces.length > 0 && ` · workspace ${c.workspaces.join(', ')}`}
+            {c.registros.length > 0 && ` · registered ${c.registros[0]}${c.registros.length > 1 ? ` … ${c.registros[c.registros.length - 1]}` : ''}`}
+            {c.renovados > 0 && ` · ${c.renovados} renewed before`}
+          </p>
+          {gaps.length > 0 && (
+            <ul className="px-4 pl-10 pb-1.5 text-[10px] font-mono text-warning space-y-0.5">
+              {gaps.map(b => <li key={b}>· {b}</li>)}
+            </ul>
+          )}
+          <Seguimiento key={`${c.key}|${c.fuAt ?? ''}|${c.seguimiento}`} c={c} onGuardar={onGuardar} sinTabla={sinTabla} />
+          <div className="flex flex-wrap gap-1.5 px-4 pl-10">
+            {c.regs.map(r => (
+              <Link key={`${r.id}-${r.end_date}`} to={`/serials?q=${r.serial}`}
+                data-hit={r.hit ? 'true' : undefined}
+                title={`${r.device ?? 'device unknown'} · start ${r.date_of_sale ?? '?'}${r.renovado ? ' · renewed before' : ''}${r.noReportado ? ' · not reported sold by the distributor' : ''}${r.sellout ? ` · sell-out: ${r.sellout.end_customer ?? '—'} via ${r.sellout.reseller ?? '—'} (${r.sellout.date_sold ?? '?'})` : ''}`}
+                className={`font-mono text-[11px] px-2 py-0.5 rounded transition-colors ${
+                  r.hit
+                    ? 'bg-warning/25 text-warning ring-1 ring-warning/60 hover:bg-warning/30'
+                    : 'bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08]'}`}>
+                {r.serial}
+                <span className="text-muted"> · {r.device ?? '?'}</span>
+                {c.ventas.length > 1 && <span className="text-muted opacity-70"> · {r.date_of_sale}</span>}
+                {r.renovado && <span className="text-accent/80"> ·R</span>}
+                {r.noReportado && <span className="text-warning"> ·not sold</span>}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Editor de seguimiento de un contrato: estado + nota, guarda para todos sus
+// seriales. Queda registrado quién y cuándo.
+function Seguimiento({ c, onGuardar, sinTabla }) {
+  const inicial = c.seguimiento === 'mixed' ? 'open' : c.seguimiento;
+  const [estado, setEstado] = useState(inicial);
+  const [nota, setNota] = useState(c.nota ?? '');
+  const [guardando, setGuardando] = useState(false);
+  const [err, setErr] = useState('');
+  const cambiado = estado !== c.seguimiento || nota.trim() !== (c.nota ?? '');
+  const guardar = async () => {
+    setGuardando(true); setErr('');
+    try { await onGuardar(c, estado, nota.trim()); } catch (e) { setErr(e.message); setGuardando(false); }
+  };
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap px-4 pl-10 pb-2">
+      <span className="text-[10px] font-mono text-muted uppercase tracking-wider mr-1">Follow-up</span>
+      {Object.entries(SEGUIMIENTO).map(([k, s]) => (
+        <button key={k} onClick={() => setEstado(k)} disabled={sinTabla}
+          className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors disabled:opacity-40 ${
+            estado === k ? `${s.cls} ring-1 ring-white/20` : 'text-muted hover:text-white'}`}>
+          {s.label}
+        </button>
+      ))}
+      <input value={nota} onChange={e => setNota(e.target.value)} maxLength={300} disabled={sinTabla}
+        onKeyDown={e => { if (e.key === 'Enter' && cambiado && !guardando) guardar(); }}
+        placeholder="Note — who you talked to, quote #, next step…"
+        className="flex-1 min-w-[220px] bg-white/[0.03] border border-white/[0.1] rounded px-2 py-1 text-[11px] font-sans text-white placeholder:text-muted focus:outline-none focus:border-accent/50 disabled:opacity-40" />
+      <button onClick={guardar} disabled={!cambiado || guardando || sinTabla}
+        className="px-2.5 py-1 rounded bg-accent text-white text-[10px] font-mono hover:bg-accent/80 disabled:opacity-30 transition-colors">
+        {guardando ? 'Saving…' : 'Save'}
+      </button>
+      {c.fuAt && (
+        <span className="text-[10px] font-mono text-muted">
+          last update {c.fuBy ?? '?'} · {c.fuAt.slice(0, 10)}{c.seguimiento === 'mixed' ? ' · devices have different statuses' : ''}
+        </span>
+      )}
+      {err && <span className="text-[10px] font-mono text-danger">Not saved: {err}</span>}
     </div>
   );
 }
@@ -367,282 +876,29 @@ function Panel({ children }) {
   );
 }
 
-function Encabezados({ cols }) {
-  return (
-    <thead>
-      <tr className="border-b border-white/[0.06]">
-        {cols.map(h => (
-          <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
-        ))}
-      </tr>
-    </thead>
-  );
-}
-
-function Vacio({ cols, children }) {
-  return (
-    <tr><td colSpan={cols} className="px-4 py-8 text-center text-muted font-mono">
-      {children}
-    </td></tr>
-  );
-}
-
-// Agrupado como lo lee Supply Chain: la FECHA DE FIN manda, adentro el
-// cliente final, y adentro del cliente cada serial con su device. Los grupos
-// de clientes arrancan abiertos; el botón los colapsa.
-
-// Nombre del grupo de cliente. Si no hay end customer (típico de las facturas
-// sueltas, donde NetSuite solo tiene a quién se facturó), se agrupa por lo
-// más razonable que haya: reseller, y si no, distributor. La fila avisa que
-// el end customer no está registrado.
-export function nombreGrupo(r) {
-  const c = (r.customer ?? '').trim();
-  if (c) return c;
-  const res = (r.reseller ?? '').trim();
-  if (res) return res;
-  const d = (r.distributor ?? '').trim();
-  if (d && d !== 'unknown') return d;
-  return 'end customer not recorded';
-}
-
-function TablaDevices({ filas, q }) {
-  // Todo arranca COLAPSADO; `abiertos` guarda los grupos expandidos.
-  // Una busqueda expande solo los grupos con match y scrollea al primero.
-  const [abiertos, setAbiertos] = useState(() => new Set());
-  useEffect(() => {
-    if (!q) { setAbiertos(new Set()); return; }
-    const conHit = new Set();
-    for (const r of filas) {
-      if (r.hit) conHit.add(`${r.end_date}|${nombreGrupo(r)}`);
-    }
-    setAbiertos(conHit);
-    const timer = setTimeout(() => {
-      document.querySelector('[data-hit="true"]')
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [q, filas]);
-
-  const grupos = useMemo(() => {
-    const porFecha = new Map();
-    for (const r of filas) {
-      if (!porFecha.has(r.end_date)) porFecha.set(r.end_date, new Map());
-      const porCliente = porFecha.get(r.end_date);
-      const k = nombreGrupo(r);
-      if (!porCliente.has(k)) porCliente.set(k, []);
-      porCliente.get(k).push(r);
-    }
-    return [...porFecha.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([fecha, m]) => ({
-        fecha,
-        total: [...m.values()].reduce((s, v) => s + v.length, 0),
-        clientes: [...m.entries()]
-          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-          .map(([cliente, regs]) => ({ cliente, regs })),
-      }));
-  }, [filas]);
-
-  const alternar = k => setAbiertos(prev => {
-    const n = new Set(prev);
-    if (n.has(k)) n.delete(k); else n.add(k);
-    return n;
-  });
-  const abrirTodo = () => setAbiertos(new Set(
-    grupos.flatMap(g => g.clientes.map(({ cliente }) => `${g.fecha}|${cliente}`))));
-
-  if (grupos.length === 0) {
-    return (
-      <div className="bg-card rounded-lg border border-white/[0.08] px-4 py-8 text-center text-muted font-mono text-xs">
-        Nothing matches — or the Launchpad table is still empty
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end gap-1">
-        <button onClick={abrirTodo}
-          className="px-2.5 py-1 rounded border border-white/[0.12] text-[10px] font-mono text-muted hover:text-white hover:border-accent/50 transition-colors">
-          Expand all
-        </button>
-        <button onClick={() => setAbiertos(new Set())}
-          className="px-2.5 py-1 rounded border border-white/[0.12] text-[10px] font-mono text-muted hover:text-white hover:border-accent/50 transition-colors">
-          Collapse all
-        </button>
-      </div>
-      {(q ? grupos : grupos.slice(0, 80)).map(g => {
-        const dias = diasHasta(g.fecha);
-        const vencido = estadoGarantia(g.fecha) === 'expired';
-        return (
-          <div key={g.fecha} className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
-            {/* La fecha de fin es el título del grupo */}
-            <div className="flex items-baseline gap-3 px-4 py-2.5 border-b border-white/[0.06] bg-white/[0.02]">
-              <span className={`font-mono font-semibold text-sm ${
-                vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-white'}`}>
-                {g.fecha}
-              </span>
-              <span className={`font-mono text-[11px] ${
-                vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-400'}`}>
-                {vencido ? 'expired' : `in ${dias}d`}
-              </span>
-              <span className="ml-auto font-mono text-[11px] text-muted">
-                {g.total} {g.total === 1 ? 'device' : 'devices'} · {g.clientes.length} {g.clientes.length === 1 ? 'customer' : 'customers'}
-              </span>
-            </div>
-            {g.clientes.map(({ cliente, regs }) => {
-              const k = `${g.fecha}|${cliente}`;
-              const abierto = abiertos.has(k);
-              const ventas = [...new Set(regs.map(r => r.date_of_sale))].sort();
-              const planes = [...new Set(regs.map(r => `${r.plan_years}y`))];
-              const resellers = [...new Set(regs.map(r => r.reseller).filter(Boolean))];
-              const distribuidores = [...new Set(regs.map(r => r.distributor).filter(Boolean))];
-              const originales = [...new Set(regs.map(r => r.original_customer).filter(Boolean))];
-              // "admin" = lo registro RealWear mismo en Launchpad: no dice quien lo vendio
-              const resellerReal = resellers.filter(r => r.toLowerCase() !== 'admin');
-              const fuentes = [...new Set(regs.flatMap(r => r.sources ?? ['launchpad']))];
-              const registros = [...new Set(regs.map(r => r.submitted).filter(Boolean))].sort();
-              const emails = [...new Set(regs.map(r => r.customer_email).filter(Boolean))];
-              const workspaces = [...new Set(regs.map(r => r.customer_workspace).filter(Boolean))];
-              const renovados = regs.filter(r => r.renovado).length;
-              // A quién llamar: el nombre grande es el contacto (end customer si
-              // está; si no, reseller; si no, distributor) y el badge dice qué es.
-              const rol = (regs[0].customer ?? '').trim() ? 'end customer'
-                : (regs[0].reseller ?? '').trim() ? 'reseller'
-                : (regs[0].distributor && regs[0].distributor !== 'unknown') ? 'distributor' : null;
-              // El nombre vino del reporte del disti, no de NetSuite/Launchpad
-              const deSellout = rol === 'end customer' ? regs.some(r => r.customer_source === 'sellout')
-                : rol === 'reseller' ? regs.some(r => r.reseller_source === 'sellout') : false;
-              const facturas = [...new Set(regs.filter(r => (r.sources ?? []).includes('invoice'))
-                .map(r => r.so_number).filter(Boolean))].sort();
-              const modelos = [...regs.reduce((m, r) => {
-                const d = r.device ?? '?';
-                m.set(d, (m.get(d) ?? 0) + 1);
-                return m;
-              }, new Map()).entries()].sort((a, b) => b[1] - a[1])
-                .map(([d, n]) => (n > 1 ? `${d} ×${n}` : d));
-              return (
-                <div key={k} className="border-b border-white/[0.04] last:border-b-0">
-                  <button onClick={() => alternar(k)}
-                    className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
-                    <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
-                    <span className="font-sans text-white text-sm font-medium truncate max-w-[300px]" title={cliente}>{cliente}</span>
-                    {rol && (
-                      <span title={deSellout ? SELLOUT_TITLE
-                          : rol === 'end customer' ? 'End customer registered in Launchpad / NetSuite'
-                          : rol === 'reseller' ? 'No end customer recorded: the reseller who registered the devices is the contact'
-                          : 'No end customer recorded: the distributor RealWear invoiced is the contact'}
-                        className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${
-                          deSellout ? 'bg-accent/15 text-accent'
-                          : rol === 'end customer' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
-                        {rol}{deSellout ? ` · ${SELLOUT_LABEL}` : ''}
-                      </span>
-                    )}
-                    <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[380px]"
-                      title={`Reseller (registered in Launchpad): ${resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear, NetSuite): ${distribuidores.join(', ') || 'unknown'}${originales.length ? `\nOriginal customer: ${originales.join(', ')}` : ''}${facturas.length ? `\nNetSuite invoice(s): ${facturas.join(', ')}` : ''}`}>
-                      {fuentes.map(f => (
-                        <span key={f} title={f === 'invoice' ? 'From a NetSuite invoice: device sold as a subscription SKU, start/end dates on the invoice line, not registered in Launchpad' : 'Registered in Launchpad by the reseller'}
-                          className={`font-mono text-[9px] px-1.5 py-0.5 rounded mr-1.5 ${
-                            f === 'invoice' ? 'bg-accent/15 text-accent' : 'bg-white/[0.07] text-slate-300'}`}>
-                          {f === 'invoice' ? 'Invoice' : 'Launchpad'}
-                        </span>
-                      ))}
-                      {rol === 'end customer' && (<>
-                        <span className="text-muted">reseller </span>
-                        <span className={resellerReal.length ? 'text-accent/80' : 'text-muted italic'}>
-                          {resellerReal.length ? resellerReal.join(', ') : 'registered by RealWear'}
-                        </span>
-                        <span className="text-muted"> · distributor </span>
-                        <span className={distribuidores.length ? 'text-accent/80' : 'text-muted italic'}>
-                          {distribuidores.length ? distribuidores.join(', ') : 'unknown'}
-                        </span>
-                      </>)}
-                      {rol === 'reseller' && (<>
-                        <span className="text-muted">distributor </span>
-                        <span className={distribuidores.length ? 'text-accent/80' : 'text-muted italic'}>
-                          {distribuidores.length ? distribuidores.join(', ') : 'unknown'}
-                        </span>
-                      </>)}
-                      {rol === 'distributor' && (facturas.length
-                        ? (<>
-                            <span className="text-muted">invoiced by RealWear · invoice </span>
-                            <span className="text-accent/80">{facturas.slice(0, 3).join(', ')}{facturas.length > 3 ? ` +${facturas.length - 3}` : ''}</span>
-                          </>)
-                        : <span className="text-muted italic">reseller unknown</span>)}
-                      {!rol && <span className="text-muted italic">no contact recorded</span>}
-                    </span>
-                    <span className="font-mono text-[10px] text-muted whitespace-nowrap">
-                      {regs.length} {regs.length === 1 ? 'device' : 'devices'} · plan {planes.join('/')}
-                      {' · '}
-                      <span className="text-slate-300">start {ventas[0]}{ventas.length > 1 ? ` … ${ventas[ventas.length - 1]}` : ''}</span>
-                    </span>
-                    <span className="font-mono text-[10px] text-muted truncate max-w-[220px] hidden lg:inline"
-                      title={modelos.join(', ')}>
-                      {modelos.slice(0, 3).join(' · ')}{modelos.length > 3 ? ` +${modelos.length - 3}` : ''}
-                    </span>
-                  </button>
-                  {abierto && (
-                    <p className="px-4 pl-10 pb-1.5 text-[10px] font-mono text-muted truncate"
-                      title={`${emails.join(', ')}${workspaces.length ? ` · workspace ${workspaces.join(', ')}` : ''}`}>
-                      {emails[0] ?? 'no contact email'}
-                      {workspaces.length > 0 && ` · workspace ${workspaces[0]}`}
-                      {` · registered ${registros[0] ?? '—'}${registros.length > 1 ? ` … ${registros[registros.length - 1]}` : ''}`}
-                      {renovados > 0 && ` · ${renovados} renewed`}
-                    </p>
-                  )}
-                  {abierto && (
-                    <div className="flex flex-wrap gap-1.5 px-4 pb-2.5 pl-10">
-                      {regs.map(r => (
-                        <Link key={r.id} to={`/serials?q=${r.serial}`}
-                          data-hit={r.hit ? 'true' : undefined}
-                          title={`${r.device ?? 'device unknown'}${r.renovado ? ' · renewed' : ''} · sold ${r.date_of_sale}`}
-                          className={`font-mono text-[11px] px-2 py-0.5 rounded transition-colors ${
-                            r.hit
-                              ? 'bg-warning/25 text-warning ring-1 ring-warning/60 hover:bg-warning/30'
-                              : 'bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08]'}`}>
-                          {r.serial}
-                          <span className="text-muted"> · {r.device ?? '?'}</span>
-                          {ventas.length > 1 && <span className="text-muted opacity-70"> · {r.date_of_sale}</span>}
-                          {r.renovado && <span className="text-accent/80"> ·R</span>}
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-      {!q && grupos.length > 80 && (
-        <p className="text-[10px] text-muted font-mono">
-          Showing the first 80 of {grupos.length} end dates — narrow the search or use Export Excel.
-        </p>
-      )}
-    </div>
-  );
-}
-
 function TablaSoftware({ filas }) {
   return (
     <Panel>
       <table className="w-full text-xs">
-        <Encabezados cols={['SO', 'Customer', 'Plan', 'Start', 'Ends', 'Status']} />
+        <thead>
+          <tr className="border-b border-white/[0.06]">
+            {['SO', 'Customer', 'Plan', 'Start', 'Ends', 'Status'].map(h => (
+              <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
-          {filas.length === 0 ? <Vacio cols={6}>Nothing matches</Vacio> : filas.map((r, i) => {
+          {filas.length === 0 ? (
+            <tr><td colSpan={6} className="px-4 py-8 text-center text-muted font-mono">Nothing in this view</td></tr>
+          ) : filas.map((r, i) => {
             const dias = diasHasta(r.end_date);
             const vencido = estadoGarantia(r.end_date) === 'expired';
             return (
-              <tr key={`${r.so_number}-${i}`} data-hit={r.hit ? 'true' : undefined}
-                className={`border-b border-white/[0.04] transition-colors ${
-                  r.hit ? 'bg-warning/10' : 'hover:bg-white/[0.03]'}`}>
+              <tr key={`${r.so_number}-${i}`} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
                 <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-                  <Link to={`/backlog?so=${r.so_number}`} className="text-accent hover:text-accent/80">
-                    {r.so_number}
-                  </Link>
+                  <Link to={`/backlog?so=${r.so_number}`} className="text-accent hover:text-accent/80">{r.so_number}</Link>
                 </td>
-                <td className="px-4 py-2.5 font-sans text-white max-w-[300px] truncate"
-                  title={r.customer}>{nombreCuenta(r.customer)}</td>
+                <td className="px-4 py-2.5 font-sans text-white max-w-[300px] truncate" title={r.customer}>{nombreCuenta(r.customer)}</td>
                 <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
                   DEV-PRO-12 <span className="opacity-60">· Device Pro, 12 months</span>
                 </td>
