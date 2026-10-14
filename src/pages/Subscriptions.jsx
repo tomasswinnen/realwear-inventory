@@ -29,13 +29,45 @@ async function fetchSubs() {
   const traer = async armar => {
     try { return await paginar(armar); } catch { return null; }
   };
-  const [lp, sw] = await Promise.all([
+  const [lp, sw, inv] = await Promise.all([
     traer(() => supabase.from('launchpad_subs').select('*')
       .order('end_date', { ascending: false })),
     traer(() => supabase.from('warranties').select('*')
       .eq('sku', 'DEV-PRO-12').order('end_date', { ascending: false })),
+    // Tercera fuente: suscripciones de device facturadas como factura suelta
+    // (Arc 3 / Arc 2 / Navigator anuales, ARIOS...). No pasan por Launchpad;
+    // el pipeline las baja de las lineas de factura con custcol_order_end_date.
+    traer(() => supabase.from('warranties').select('*')
+      .eq('start_source', 'invoice').order('end_date', { ascending: false })),
   ]);
-  return { lp: lp ?? [], sw: sw ?? [], falta: lp === null };
+  let invSer = [];
+  const facturas = [...new Set((inv ?? []).map(w => w.so_number).filter(Boolean))];
+  if (facturas.length) {
+    invSer = (await traer(() => supabase.from('warranty_serials').select('*')
+      .in('so_number', facturas))) ?? [];
+  }
+  return { lp: lp ?? [], sw: sw ?? [], inv: inv ?? [], invSer, falta: lp === null };
+}
+
+// Fila de factura -> misma forma que una fila de Launchpad, para que el
+// agrupado, los KPIs y el grafico las traten igual. El device sale del item
+// ("127033 - Non-Inventory RealWear Arc 3" -> 127033).
+function filaDesdeFactura(s, planPorFactura) {
+  const w = planPorFactura.get(s.so_number) ?? {};
+  const m = /^(\d{6}\S*)/.exec(s.sku ?? '');
+  return {
+    id: `inv-${s.serial}-${s.so_number}`,
+    serial: s.serial, plan_code: s.sku, plan: 'Paid device subscription',
+    plan_years: w.plan_years ?? null,
+    date_of_sale: s.start_date, end_date: s.end_date,
+    customer: (s.end_customer ?? '').trim(),
+    customer_email: '', customer_workspace: '',
+    reseller: '', reseller_email: '',
+    distributor: nombreCuenta(s.customer), original_customer: null,
+    submitted: w.so_date ?? s.start_date, roi_kit: null,
+    device: m ? m[1] : null, so_number: s.so_number,
+    sources: ['invoice'],
+  };
 }
 
 const FILTROS = {
@@ -48,7 +80,7 @@ const FILTROS = {
 function coincide(r, q) {
   if (!q) return true;
   const t = q.toLowerCase();
-  return [r.serial, r.customer, r.customer_email, r.reseller, r.distributor, r.so_number, r.end_customer]
+  return [r.serial, r.customer, r.customer_email, r.reseller, r.distributor, r.so_number, r.end_customer, r.plan_code]
     .some(v => (v ?? '').toLowerCase().includes(t));
 }
 
@@ -62,6 +94,7 @@ async function exportarExcel(devices, software) {
     'Days left': Math.max(0, diasHasta(r.end_date) ?? 0),
     'End customer': r.customer,
     'Serial': r.serial, 'Device': r.device ?? '',
+    'Source': (r.sources ?? ['launchpad']).map(s => (s === 'invoice' ? 'NetSuite invoice' : 'Launchpad')).join(' + '),
     'Plan': `${r.plan_years}y (code ${r.plan_code})`,
     'Date of sale': r.date_of_sale,
     'Status': estadoGarantia(r.end_date),
@@ -108,8 +141,36 @@ export function Subscriptions() {
 
   const v = useMemo(() => {
     if (!data) return null;
-    // Suscripciones de device = solo los planes PAGOS de Launchpad
-    const pagasTodo = data.lp.filter(r => r.plan_code !== 'SSP-STANDARD');
+    // Suscripciones de device = planes PAGOS de Launchpad + facturas sueltas
+    // de NetSuite. Un serial en las dos fuentes es UNA fila: queda la fecha de
+    // fin mas tardia y se marcan ambas fuentes.
+    const lpPagas = data.lp.filter(r => r.plan_code !== 'SSP-STANDARD')
+      .map(r => ({ ...r, sources: ['launchpad'] }));
+    const planPorFactura = new Map(data.inv.map(w => [w.so_number, w]));
+    const deFactura = data.invSer.map(s => filaDesdeFactura(s, planPorFactura));
+    const porSerialFact = new Map(deFactura.map(r => [r.serial, r]));
+    const pagasTodo = [];
+    const vistos = new Set();
+    for (const r of lpPagas) {
+      const f = porSerialFact.get(r.serial);
+      if (f) {
+        vistos.add(r.serial);
+        const gana = f.end_date > r.end_date ? f : r;
+        pagasTodo.push({
+          ...gana,
+          customer: r.customer || f.customer,
+          customer_email: r.customer_email, customer_workspace: r.customer_workspace,
+          reseller: r.reseller, reseller_email: r.reseller_email,
+          distributor: r.distributor || f.distributor,
+          device: r.device || f.device,
+          so_number: r.so_number || f.so_number,
+          id: r.id, sources: ['launchpad', 'invoice'],
+        });
+      } else {
+        pagasTodo.push(r);
+      }
+    }
+    for (const f of deFactura) if (!vistos.has(f.serial)) pagasTodo.push(f);
     const porSerial = new Map();
     for (const r of pagasTodo) porSerial.set(r.serial, (porSerial.get(r.serial) ?? 0) + 1);
     for (const r of pagasTodo) r.renovado = porSerial.get(r.serial) > 1;
@@ -226,7 +287,10 @@ export function Subscriptions() {
             the customer activates it, and declares the date of sale — so coverage runs from
             first use, not from RealWear’s invoice. Launchpad plan codes: 2224 = 3 years,
             2227 = 2 years, 2228 = 1 year. “Renewed” marks serials registered more than once.
-            Reseller = who registered the device in Launchpad (“registered by RealWear” when it
+            “NetSuite invoice” rows are device subscriptions invoiced directly (Arc 3 / Arc 2 /
+            Navigator annual plans, ARIOS) with the coverage dates on the invoice line — the
+            reseller never registered them in Launchpad, so the end customer is usually not
+            recorded there. Reseller = who registered the device in Launchpad (“registered by RealWear” when it
             was the admin account); Distributor = the account RealWear invoiced, from NetSuite.
             Standard 1-year warranty registrations ({v.kpi.estandar.toLocaleString()} of them)
             are not listed here — warranty coverage lives in the Warranties tab. Software
@@ -277,7 +341,7 @@ function TablaDevices({ filas, q }) {
     if (!q) { setAbiertos(new Set()); return; }
     const conHit = new Set();
     for (const r of filas) {
-      if (r.hit) conHit.add(`${r.end_date}|${(r.customer ?? '').trim() || '(no customer recorded)'}`);
+      if (r.hit) conHit.add(`${r.end_date}|${(r.customer ?? '').trim() || 'end customer not recorded'}`);
     }
     setAbiertos(conHit);
     const timer = setTimeout(() => {
@@ -292,7 +356,7 @@ function TablaDevices({ filas, q }) {
     for (const r of filas) {
       if (!porFecha.has(r.end_date)) porFecha.set(r.end_date, new Map());
       const porCliente = porFecha.get(r.end_date);
-      const k = (r.customer ?? '').trim() || '(no customer recorded)';
+      const k = (r.customer ?? '').trim() || 'end customer not recorded';
       if (!porCliente.has(k)) porCliente.set(k, []);
       porCliente.get(k).push(r);
     }
@@ -364,6 +428,7 @@ function TablaDevices({ filas, q }) {
               const originales = [...new Set(regs.map(r => r.original_customer).filter(Boolean))];
               // "admin" = lo registro RealWear mismo en Launchpad: no dice quien lo vendio
               const resellerReal = resellers.filter(r => r.toLowerCase() !== 'admin');
+              const fuentes = [...new Set(regs.flatMap(r => r.sources ?? ['launchpad']))];
               const registros = [...new Set(regs.map(r => r.submitted).filter(Boolean))].sort();
               const emails = [...new Set(regs.map(r => r.customer_email).filter(Boolean))];
               const workspaces = [...new Set(regs.map(r => r.customer_workspace).filter(Boolean))];
@@ -382,6 +447,13 @@ function TablaDevices({ filas, q }) {
                     <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
                     <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[360px]"
                       title={`Reseller (registered in Launchpad): ${resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear, NetSuite): ${distribuidores.join(', ') || 'unknown'}${originales.length ? `\nOriginal customer: ${originales.join(', ')}` : ''}`}>
+                      {fuentes.map(f => (
+                        <span key={f} title={f === 'invoice' ? 'NetSuite: invoiced with coverage dates on the line' : 'Launchpad: registered by the reseller'}
+                          className={`font-mono text-[9px] px-1.5 py-0.5 rounded mr-1.5 ${
+                            f === 'invoice' ? 'bg-accent/15 text-accent' : 'bg-white/[0.07] text-slate-300'}`}>
+                          {f === 'invoice' ? 'NetSuite invoice' : 'Launchpad'}
+                        </span>
+                      ))}
                       <span className="text-muted">reseller </span>
                       <span className={resellerReal.length ? 'text-accent/80' : 'text-muted italic'}>
                         {resellerReal.length ? resellerReal.join(', ') : 'registered by RealWear'}

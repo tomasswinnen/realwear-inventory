@@ -53,6 +53,17 @@ service plan; ver regla abajo).
   flete inbound/aduana/transfer** — no la tiene por diseño.
 - `demand_forecast`: promedios 3/6 meses y suma 12 sobre MESES COMPLETOS
   (excluye el mes en curso), solo SKUs presentes en `monthly_sales`.
+- **Garantías y suscripciones tienen tres fuentes**, y ninguna sola alcanza:
+  (1) líneas de SO con ítems de plan (`Q_WARRANTIES`, SSP/SP-ADV/WAR/SUPP/
+  RMA-POOL/DEV-PRO); (2) registros de Launchpad (`launchpad_subs`, hoy vía el
+  record `customrecord_dv` de NetSuite o el CSV de Retool); (3) **facturas
+  sueltas con `custcol_order_start_date`/`custcol_order_end_date` en la línea**
+  (Arc 3 / Arc 2 / Navigator / ARIOS anuales) — `Q_WARRANTIES_FACTURAS`, entran
+  a `warranties` con `start_source = 'invoice'` y `so_number` = nº de factura.
+  Launchpad NO tiene estas últimas: el reseller no las registra. En
+  `/subscriptions` las tres se fusionan por serial (gana la fecha de fin más
+  tardía; tag de fuente por grupo). Caso testigo: `MPE6R905D2655554` (Barcotec,
+  Arc 3, factura 22372, fin 2026-11-09).
 - **Garantías**: en NetSuite NO viven en el serial (`inventorynumber` no tiene
   fecha ni campos custom) sino en la LÍNEA de la SO:
   `custcol_sp_end_customer` (cliente final atrás del distribuidor),
