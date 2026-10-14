@@ -64,7 +64,7 @@ async function exportarExcel(filas, noReportados) {
     'Distributor': r.distributor ?? '', 'Serial': r.serial, 'SKU': r.sku ?? '',
     'Date sold (sell-out)': r.date_sold ?? '',
     'End customer': r.ec ?? '',
-    'End customer source': r.ecSource === 'netsuite' ? 'NetSuite' : r.ecSource === 'launchpad' ? 'Launchpad' : r.ecSource === 'sellout' ? 'sell-out Excel only' : 'unknown',
+    'End customer source': r.ecSource === 'netsuite' ? 'NetSuite' : r.ecSource === 'launchpad' ? 'Launchpad' : r.ecSource === 'sellout' ? 'sell-out Excel only' : r.ecSource === 'reseller' ? 'unknown — trail stops at reseller' : 'unknown — no trace',
     'Reseller (sell-out)': r.reseller ?? '',
     'Coverage on record': r.cobertura ? 'yes' : 'no',
     'Coverage end': r.coberturaFin ?? '',
@@ -115,7 +115,10 @@ export function DataHealth() {
       const ecNs = (w?.end_customer ?? '').trim();
       const ecLp = (l?.customer ?? '').trim();
       const ecSo = (r.end_customer ?? '').trim();
-      const ecSource = ecNs ? 'netsuite' : ecLp ? 'launchpad' : ecSo ? 'sellout' : null;
+      // 'reseller' = el disti sí lo vendió (a un reseller, con fecha) pero
+      // nadie reportó a quién se lo vendió el reseller: el rastro se corta ahí.
+      const resSo = (r.reseller ?? '').trim();
+      const ecSource = ecNs ? 'netsuite' : ecLp ? 'launchpad' : ecSo ? 'sellout' : resSo ? 'reseller' : null;
       const ec = ecNs || ecLp || ecSo || null;
       const cobertura = w ? 'NetSuite' : l ? 'Launchpad' : null;
       const coberturaFin = w?.end_date ?? l?.end_date ?? null;
@@ -140,6 +143,7 @@ export function DataHealth() {
         ...g, n,
         ecSistema: cnt(r => r.ecSource === 'netsuite' || r.ecSource === 'launchpad'),
         ecSellout: cnt(r => r.ecSource === 'sellout'),
+        ecReseller: cnt(r => r.ecSource === 'reseller'),
         ecNinguno: cnt(r => !r.ecSource),
         conCobertura: cnt(r => r.cobertura),
         sinCobertura: cnt(r => !r.cobertura),
@@ -168,6 +172,7 @@ export function DataHealth() {
       total,
       ecSistema: cnt(r => r.ecSource === 'netsuite' || r.ecSource === 'launchpad'),
       ecSellout: cnt(r => r.ecSource === 'sellout'),
+      ecReseller: cnt(r => r.ecSource === 'reseller'),
       ecNinguno: cnt(r => !r.ecSource),
       conCobertura: cnt(r => r.cobertura),
       nsTypo: cnt(r => r.ns_match === 'typo'),
@@ -213,8 +218,8 @@ export function DataHealth() {
           <KPICard label="Devices sold by distributors" value={v.kpi.total.toLocaleString()}
             sub="per the sell-out reports (this year’s Excel)" accent />
           <KPICard label="End customer known" value={pct(v.kpi.ecSistema + v.kpi.ecSellout, v.kpi.total)}
-            color={v.kpi.ecNinguno ? 'text-warning' : undefined}
-            sub={`${v.kpi.ecSistema} in NetSuite/Launchpad · ${v.kpi.ecSellout} only in the Excel · ${v.kpi.ecNinguno} nobody knows`} />
+            color={v.kpi.ecReseller + v.kpi.ecNinguno ? 'text-warning' : undefined}
+            sub={`${v.kpi.ecSistema} in NetSuite/Launchpad · ${v.kpi.ecSellout} only in the Excel · ${v.kpi.ecReseller} trail stops at a reseller · ${v.kpi.ecNinguno} no trace`} />
           <KPICard label="Coverage on record" value={pct(v.kpi.conCobertura, v.kpi.total)}
             color={v.kpi.total === v.kpi.conCobertura ? undefined : v.kpi.total - v.kpi.conCobertura > v.kpi.conCobertura ? 'text-danger' : 'text-warning'}
             sub={`${(v.kpi.total - v.kpi.conCobertura).toLocaleString()} devices with no plan and no Launchpad registration`} />
@@ -264,7 +269,7 @@ export function DataHealth() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/[0.06]">
-                  {['Distributor', 'Devices', 'End customer in a system', 'End customer only in Excel', 'Nobody knows', 'Coverage on record', 'Not matching NetSuite', 'Launchpad ≠ Excel'].map(h => (
+                  {['Distributor', 'Devices', 'End customer in a system', 'End customer only in Excel', 'Trail stops at reseller', 'No trace', 'Coverage on record', 'Not matching NetSuite', 'Launchpad ≠ Excel'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-left text-muted font-sans font-medium uppercase tracking-wider text-[10px]">{h}</th>
                   ))}
                 </tr>
@@ -278,6 +283,7 @@ export function DataHealth() {
           </div>
           <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
             “End customer in a system” = NetSuite SO/invoice line or Launchpad registration. “Only in Excel” = we know it solely from the distributor’s sell-out report.
+            “Trail stops at reseller” = the distributor did sell it (to a named reseller, on a date) but nobody reported who the reseller sold it to — reseller stock, or an unreported sale. “No trace” = not even a reseller.
             “Coverage on record” = a paid plan in NetSuite or a Launchpad registration (standard warranty included); without it, nobody can tell when the device stops being covered.
           </p>
         </section>
@@ -326,7 +332,8 @@ function Celda({ n, total, tono }) {
 
 function RowGroup({ g, abierto, onToggle }) {
   const listas = [
-    ['Nobody knows the end customer', g.regs.filter(r => !r.ecSource)],
+    ['Trail stops at the reseller (end customer unknown)', g.regs.filter(r => r.ecSource === 'reseller')],
+    ['No trace at all', g.regs.filter(r => !r.ecSource)],
     ['End customer only in the Excel', g.regs.filter(r => r.ecSource === 'sellout')],
     ['No coverage on record', g.regs.filter(r => !r.cobertura)],
     ['Not matching NetSuite', g.regs.filter(r => NS[r.ns_match])],
@@ -342,6 +349,7 @@ function RowGroup({ g, abierto, onToggle }) {
         <td className="px-4 py-2.5 font-num text-white">{g.n}</td>
         <Celda n={g.ecSistema} total={g.n} tono="text-success" />
         <Celda n={g.ecSellout} total={g.n} tono="text-accent" />
+        <Celda n={g.ecReseller} total={g.n} tono="text-warning" />
         <Celda n={g.ecNinguno} total={g.n} tono="text-danger" />
         <Celda n={g.conCobertura} total={g.n} tono={g.conCobertura * 2 >= g.n ? 'text-success' : 'text-warning'} />
         <Celda n={g.nsMal} total={g.n} tono="text-danger" />
@@ -349,7 +357,7 @@ function RowGroup({ g, abierto, onToggle }) {
       </tr>
       {abierto && (
         <tr className="border-b border-white/[0.04] bg-white/[0.015]">
-          <td colSpan={8} className="px-6 py-3 space-y-3">
+          <td colSpan={9} className="px-6 py-3 space-y-3">
             {listas.length === 0 && <p className="text-[11px] font-mono text-success">Everything about this distributor’s devices is on record.</p>}
             {listas.map(([titulo, regs]) => (
               <div key={titulo}>
@@ -361,7 +369,7 @@ function RowGroup({ g, abierto, onToggle }) {
                         r.sku ? `SKU ${r.sku}` : null,
                         r.date_sold ? `sold ${r.date_sold}` : null,
                         r.reseller ? `via ${r.reseller}` : null,
-                        r.ec ? `end customer ${r.ec} (${r.ecSource})` : 'end customer unknown',
+                        r.ec ? `end customer ${r.ec} (${r.ecSource})` : r.reseller ? 'end customer unknown — last seen at the reseller' : 'no reseller, no end customer',
                         r.mismatch ? `Launchpad says ${r.lpCustomer} / Excel says ${r.end_customer}` : null,
                         r.ns_match === 'typo' ? `NetSuite has ${r.ns_serial}` : null,
                       ].filter(Boolean).join(' · ')}
