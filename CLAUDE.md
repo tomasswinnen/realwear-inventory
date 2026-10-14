@@ -65,9 +65,11 @@ service plan; ver regla abajo).
   tardía; tag de fuente por grupo). Caso testigo: `MPE6R905D2655554` (Barcotec,
   Arc 3, factura 22372, fin 2026-11-09). Agrupación por cliente
   (`nombreGrupo` en Subscriptions.jsx): end customer → reseller → distributor
-  → "end customer not recorded"; cuando se cae al reseller/distributor la fila
-  lo avisa en gris ("end customer not recorded") — nunca un grupo anónimo si
-  hay algo razonable para mostrar.
+  → "end customer not recorded". **El nombre grande es a quién llamar**, y un
+  badge dice qué es (end customer en verde; reseller/distributor en ámbar =
+  no hay end customer registrado). Si el contacto es el distributor, la fila
+  muestra "invoiced by RealWear · invoice NNN" (números de factura). Tomas
+  no quiere ver "no end customer" como dato principal: siempre un nombre.
 - **Garantías**: en NetSuite NO viven en el serial (`inventorynumber` no tiene
   fecha ni campos custom) sino en la LÍNEA de la SO:
   `custcol_sp_end_customer` (cliente final atrás del distribuidor),

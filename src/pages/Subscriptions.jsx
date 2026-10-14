@@ -248,7 +248,7 @@ export function Subscriptions() {
       <div>
         <h1 className="text-xl font-sans font-semibold text-white">Subscriptions</h1>
         <p className="text-xs text-muted font-mono mt-0.5">
-          Paid device subscriptions registered in Launchpad, and Device Pro software plans from NetSuite
+          Paid device subscriptions — registered in Launchpad or invoiced directly in NetSuite — and Device Pro software plans. Big name = who to contact.
         </p>
       </div>
 
@@ -485,6 +485,13 @@ function TablaDevices({ filas, q }) {
               const emails = [...new Set(regs.map(r => r.customer_email).filter(Boolean))];
               const workspaces = [...new Set(regs.map(r => r.customer_workspace).filter(Boolean))];
               const renovados = regs.filter(r => r.renovado).length;
+              // A quién llamar: el nombre grande es el contacto (end customer si
+              // está; si no, reseller; si no, distributor) y el badge dice qué es.
+              const rol = (regs[0].customer ?? '').trim() ? 'end customer'
+                : (regs[0].reseller ?? '').trim() ? 'reseller'
+                : (regs[0].distributor && regs[0].distributor !== 'unknown') ? 'distributor' : null;
+              const facturas = [...new Set(regs.filter(r => (r.sources ?? []).includes('invoice'))
+                .map(r => r.so_number).filter(Boolean))].sort();
               const modelos = [...regs.reduce((m, r) => {
                 const d = r.device ?? '?';
                 m.set(d, (m.get(d) ?? 0) + 1);
@@ -496,27 +503,48 @@ function TablaDevices({ filas, q }) {
                   <button onClick={() => alternar(k)}
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
-                    <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
-                    {!(regs[0].customer ?? '').trim() && cliente !== 'end customer not recorded' && (
-                      <span className="text-[10px] font-mono text-muted italic">end customer not recorded</span>
+                    <span className="font-sans text-white text-sm font-medium truncate max-w-[300px]" title={cliente}>{cliente}</span>
+                    {rol && (
+                      <span title={rol === 'end customer' ? 'End customer registered in Launchpad / NetSuite'
+                          : rol === 'reseller' ? 'No end customer recorded: the reseller who registered the devices is the contact'
+                          : 'No end customer recorded: the distributor RealWear invoiced is the contact'}
+                        className={`font-mono text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap ${
+                          rol === 'end customer' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
+                        {rol}
+                      </span>
                     )}
-                    <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[360px]"
-                      title={`Reseller (registered in Launchpad): ${resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear, NetSuite): ${distribuidores.join(', ') || 'unknown'}${originales.length ? `\nOriginal customer: ${originales.join(', ')}` : ''}`}>
+                    <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[380px]"
+                      title={`Reseller (registered in Launchpad): ${resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear, NetSuite): ${distribuidores.join(', ') || 'unknown'}${originales.length ? `\nOriginal customer: ${originales.join(', ')}` : ''}${facturas.length ? `\nNetSuite invoice(s): ${facturas.join(', ')}` : ''}`}>
                       {fuentes.map(f => (
-                        <span key={f} title={f === 'invoice' ? 'NetSuite: invoiced with coverage dates on the line' : 'Launchpad: registered by the reseller'}
+                        <span key={f} title={f === 'invoice' ? 'From a NetSuite invoice: device sold as a subscription SKU, start/end dates on the invoice line, not registered in Launchpad' : 'Registered in Launchpad by the reseller'}
                           className={`font-mono text-[9px] px-1.5 py-0.5 rounded mr-1.5 ${
                             f === 'invoice' ? 'bg-accent/15 text-accent' : 'bg-white/[0.07] text-slate-300'}`}>
-                          {f === 'invoice' ? 'NetSuite invoice' : 'Launchpad'}
+                          {f === 'invoice' ? 'Invoice' : 'Launchpad'}
                         </span>
                       ))}
-                      <span className="text-muted">reseller </span>
-                      <span className={resellerReal.length ? 'text-accent/80' : 'text-muted italic'}>
-                        {resellerReal.length ? resellerReal.join(', ') : 'registered by RealWear'}
-                      </span>
-                      <span className="text-muted"> · distributor </span>
-                      <span className={distribuidores.length ? 'text-accent/80' : 'text-muted italic'}>
-                        {distribuidores.length ? distribuidores.join(', ') : 'unknown'}
-                      </span>
+                      {rol === 'end customer' && (<>
+                        <span className="text-muted">reseller </span>
+                        <span className={resellerReal.length ? 'text-accent/80' : 'text-muted italic'}>
+                          {resellerReal.length ? resellerReal.join(', ') : 'registered by RealWear'}
+                        </span>
+                        <span className="text-muted"> · distributor </span>
+                        <span className={distribuidores.length ? 'text-accent/80' : 'text-muted italic'}>
+                          {distribuidores.length ? distribuidores.join(', ') : 'unknown'}
+                        </span>
+                      </>)}
+                      {rol === 'reseller' && (<>
+                        <span className="text-muted">distributor </span>
+                        <span className={distribuidores.length ? 'text-accent/80' : 'text-muted italic'}>
+                          {distribuidores.length ? distribuidores.join(', ') : 'unknown'}
+                        </span>
+                      </>)}
+                      {rol === 'distributor' && (facturas.length
+                        ? (<>
+                            <span className="text-muted">invoiced by RealWear · invoice </span>
+                            <span className="text-accent/80">{facturas.slice(0, 3).join(', ')}{facturas.length > 3 ? ` +${facturas.length - 3}` : ''}</span>
+                          </>)
+                        : <span className="text-muted italic">reseller unknown</span>)}
+                      {!rol && <span className="text-muted italic">no contact recorded</span>}
                     </span>
                     <span className="font-mono text-[10px] text-muted whitespace-nowrap">
                       {regs.length} {regs.length === 1 ? 'device' : 'devices'} · plan {planes.join('/')}
