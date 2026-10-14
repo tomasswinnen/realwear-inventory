@@ -38,6 +38,7 @@ const NAV_SECTIONS = [
   { section: 'Support', items: [
     { to: '/serials',     label: 'Serial Numbers',  icon: 'hash' },
     { to: '/warranties',  label: 'Warranties',      icon: 'shield' },
+    { to: '/subscriptions', label: 'Subscriptions', icon: 'refresh' },
   ]},
 ];
 

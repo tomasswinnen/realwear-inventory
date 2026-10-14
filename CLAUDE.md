@@ -96,6 +96,13 @@ service plan; ver regla abajo).
 
 ## Historia reciente (resumen de contexto)
 
+- 15/10/2026: página Subscriptions nueva (separada de Warranties): suscripciones
+  pagas por device desde Launchpad (tabla `launchpad_subs`, carga semi-manual:
+  export de Retool `SSP_reg*.csv` en la carpeta del pipeline →
+  `subir_launchpad.py`; códigos 2224/2227/2228 = 3/2/1 años) + Device Pro
+  (software, filtro sku=DEV-PRO-12 de `warranties`). Requiere SQL_launchpad.sql
+  en Supabase (una vez). Launchpad y NetSuite son fuentes independientes.
+
 - 14/10/2026: Warranties reorganizada: vista por serial (default) con fechas
   exactas y tipo de plan, tab y filtro por región responsable. La región sale
   de la cuenta facturada vía `src/utils/region.js` (Westbase→EMEA,
