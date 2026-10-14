@@ -494,6 +494,10 @@ function TablaEquipos({ seriales, q }) {
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
                     <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
+                    <span className="font-sans text-[10px] text-accent/80 truncate max-w-[160px] whitespace-nowrap"
+                      title={cuentas.join(', ')}>
+                      {esFinal ? `via ${cuentas.join(', ')}` : 'distributor'}
+                    </span>
                     <span className="font-mono text-[10px] text-muted whitespace-nowrap">
                       {regs.length} {regs.length === 1 ? 'device' : 'devices'}
                       {planes.length > 0 && ` · ${planes.join('/')}`}
@@ -502,10 +506,6 @@ function TablaEquipos({ seriales, q }) {
                         start {inicios[0]}{inicios.length > 1 ? ` … ${inicios[inicios.length - 1]}` : ''}
                       </span>
                       {' · '}{regiones.join('/')}
-                    </span>
-                    <span className="ml-auto font-sans text-[10px] text-muted truncate max-w-[180px] hidden lg:inline"
-                      title={cuentas.join(', ')}>
-                      {esFinal ? `via ${cuentas.join(', ')}` : 'distributor — end customer not recorded'}
                     </span>
                   </button>
                   {abierto && (
