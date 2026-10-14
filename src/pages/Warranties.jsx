@@ -9,6 +9,7 @@ import { WarrantyBadge } from '../components/WarrantyBadge';
 import {
   HOY, DIAS_POR_VENCER, diasHasta, estadoGarantia, nombreCuenta, clienteFinal,
 } from '../utils/warranty';
+import { REGIONES, regionDe } from '../utils/region';
 
 // Garantías / service plans. Fuente: tablas `warranties` (una fila por línea
 // de plan vendida) y `warranty_serials` (una fila por equipo cubierto), que
@@ -16,6 +17,11 @@ import {
 // NetSuite: custcol_sp_end_customer, custcol_sp_sold_date y
 // custcol_serial_numbers. El serial en sí (inventorynumber) no tiene fecha de
 // garantía, así que esto es lo único que hay.
+//
+// La vista principal es POR EQUIPO (serial): cada fila es un dispositivo con
+// su plan, región responsable y fechas exactas de inicio y fin. La región
+// sale de la cuenta facturada (el distribuidor responsable de la zona:
+// Westbase → EMEA, ScanSource → Americas, JMACS → Japan…), ver utils/region.
 //
 // Dos cosas que la página dice en vez de esconder:
 //   1. `customer` es a quién se le FACTURÓ — casi siempre un distribuidor.
@@ -54,10 +60,17 @@ const FILTROS = {
   todas: { label: 'All', test: () => true },
 };
 
+const VISTAS = [
+  ['devices', 'By device'],
+  ['regions', 'By region'],
+  ['customers', 'By customer'],
+  ['coverages', 'By coverage'],
+];
+
 function coincide(w, q) {
   if (!q) return true;
   const t = q.toLowerCase();
-  return [w.end_customer, w.customer, w.so_number, w.sku, w.serial]
+  return [w.end_customer, w.customer, w.so_number, w.sku, w.serial, w.plan_sku]
     .some(v => (v ?? '').toLowerCase().includes(t));
 }
 
@@ -65,8 +78,25 @@ async function exportarExcel(planes, seriales) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
 
+  // Equipos primero: es la hoja que responde "¿este serial está cubierto?"
+  const ws2 = XLSX.utils.json_to_sheet(seriales.map(s => ({
+    'Serial': s.serial, 'Item': s.sku,
+    'Plan': s.plan_sku ?? '', 'Years': s.plan_years ?? '',
+    'Region': s.region, 'SO': s.so_number,
+    'End Customer': s.end_customer || '', 'Billed To': s.customer,
+    'Warranty Start': s.start_date,
+    'Start Estimated': s.start_source === 'so_date' ? 'yes' : '',
+    'Warranty End': s.end_date,
+    'Days Left': Math.max(0, diasHasta(s.end_date) ?? 0),
+    'Status': estadoGarantia(s.end_date),
+  })));
+  ws2['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 6 }, { wch: 10 },
+                  { wch: 11 }, { wch: 28 }, { wch: 32 }, { wch: 13 }, { wch: 13 },
+                  { wch: 13 }, { wch: 9 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Devices');
+
   const hojaPlanes = planes.map(w => ({
-    'SO': w.so_number, 'SO Date': w.so_date,
+    'SO': w.so_number, 'SO Date': w.so_date, 'Region': w.region,
     'Billed To': w.customer, 'End Customer': w.end_customer || '',
     'Plan': w.sku, 'Qty': w.qty, 'Years': w.plan_years,
     'Start': w.start_date, 'Start Estimated': w.start_source === 'so_date' ? 'yes' : '',
@@ -74,19 +104,10 @@ async function exportarExcel(planes, seriales) {
     'Serials Listed': w.serial_count,
   }));
   const ws1 = XLSX.utils.json_to_sheet(hojaPlanes);
-  ws1['!cols'] = [{ wch: 11 }, { wch: 11 }, { wch: 32 }, { wch: 28 }, { wch: 14 },
-                  { wch: 6 }, { wch: 6 }, { wch: 11 }, { wch: 14 }, { wch: 11 },
-                  { wch: 11 }, { wch: 13 }];
+  ws1['!cols'] = [{ wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 32 }, { wch: 28 },
+                  { wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 11 }, { wch: 14 },
+                  { wch: 11 }, { wch: 11 }, { wch: 13 }];
   XLSX.utils.book_append_sheet(wb, ws1, 'Coverages');
-
-  const ws2 = XLSX.utils.json_to_sheet(seriales.map(s => ({
-    'Serial': s.serial, 'Item': s.sku, 'SO': s.so_number,
-    'End Customer': s.end_customer || '', 'Billed To': s.customer,
-    'Start': s.start_date, 'End': s.end_date, 'Status': estadoGarantia(s.end_date),
-  })));
-  ws2['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 11 }, { wch: 28 }, { wch: 32 },
-                  { wch: 11 }, { wch: 11 }, { wch: 10 }];
-  XLSX.utils.book_append_sheet(wb, ws2, 'Devices');
 
   XLSX.writeFile(wb, `warranties_${HOY()}.xlsx`);
 }
@@ -94,15 +115,76 @@ async function exportarExcel(planes, seriales) {
 export function Warranties() {
   const [q, setQ] = useState('');
   const [filtro, setFiltro] = useState('vigentes');
-  const [vista, setVista] = useState('customers');
+  const [region, setRegion] = useState('all');
+  const [vista, setVista] = useState('devices');
   const [exportando, setExportando] = useState(false);
   const { data, loading, error, refetch } = useQuery(fetchWarranties, []);
 
   const v = useMemo(() => {
     if (!data) return null;
+
+    // Enriquecido: región (por cuenta facturada) en planes y seriales, y el
+    // plan (tipo + plazo) en cada serial, buscando en la misma SO la cobertura
+    // con las mismas fechas. warranty_serials ya trae start/end, pero no dice
+    // QUÉ plan es — eso vive en la línea (tabla warranties).
+    const planesR = data.planes.map(w => ({ ...w, region: regionDe(w.customer) }));
+    const planPorSo = new Map();
+    for (const w of planesR) {
+      if (!planPorSo.has(w.so_number)) planPorSo.set(w.so_number, []);
+      planPorSo.get(w.so_number).push(w);
+    }
+    const serialesR = data.seriales.map(s => {
+      const cand = planPorSo.get(s.so_number) ?? [];
+      const plan =
+        cand.find(w => w.end_date === s.end_date && w.start_date === s.start_date)
+        ?? cand.find(w => w.end_date === s.end_date)
+        ?? cand[0] ?? null;
+      return {
+        ...s,
+        region: regionDe(s.customer),
+        plan_sku: plan?.sku ?? null,
+        plan_years: plan?.plan_years ?? null,
+        start_source: plan?.start_source ?? null,
+      };
+    });
+
     const test = FILTROS[filtro].test;
-    const planes = data.planes.filter(w => test(estadoGarantia(w.end_date)) && coincide(w, q));
-    const seriales = data.seriales.filter(s => test(estadoGarantia(s.end_date)) && coincide(s, q));
+    const enRegion = r => region === 'all' || r.region === region;
+    const planes = planesR.filter(w => test(estadoGarantia(w.end_date)) && coincide(w, q) && enRegion(w));
+    const seriales = serialesR.filter(s => test(estadoGarantia(s.end_date)) && coincide(s, q) && enRegion(s));
+
+    // Resumen por región: sobre TODO el histórico (sin búsqueda ni filtro de
+    // estado) — es el mapa de responsabilidades, no una vista filtrada.
+    const porRegion = new Map();
+    const reg = r => {
+      if (!porRegion.has(r)) {
+        porRegion.set(r, {
+          region: r, equiposVig: 0, porVencer: 0, vencidos: 0,
+          planesVig: 0, unidades: 0, dist: new Set(), proximo: null,
+        });
+      }
+      return porRegion.get(r);
+    };
+    for (const s of serialesR) {
+      const g = reg(s.region);
+      const e = estadoGarantia(s.end_date);
+      if (e === 'expired') g.vencidos += 1;
+      else {
+        g.equiposVig += 1;
+        if (e === 'expiring') g.porVencer += 1;
+        if (g.proximo === null || s.end_date < g.proximo) g.proximo = s.end_date;
+      }
+    }
+    for (const w of planesR) {
+      const g = reg(w.region);
+      g.dist.add(nombreCuenta(w.customer));
+      if (estadoGarantia(w.end_date) !== 'expired') {
+        g.planesVig += 1;
+        g.unidades += w.qty ?? 0;
+      }
+    }
+    const regiones = [...REGIONES, 'Unassigned']
+      .map(r => porRegion.get(r)).filter(Boolean);
 
     // Agrupado por cliente. La clave es el cliente final cuando está cargado;
     // si no, la cuenta facturada, marcada como distribuidor para que no se
@@ -116,6 +198,7 @@ export function Warranties() {
           k,
           nombre: clienteFinal(w) ?? nombreCuenta(w.customer),
           esFinal: Boolean(clienteFinal(w)),
+          region: w.region,
           distribuidores: new Set(),
           planes: 0, unidades: 0, equipos: new Set(),
           proximo: null, skus: new Set(),
@@ -137,8 +220,8 @@ export function Warranties() {
       .sort((a, b) => (b.equipos.size - a.equipos.size) || (b.unidades - a.unidades));
 
     // KPIs: siempre sobre el total, no sobre el filtro — son la foto de hoy.
-    const vigPlanes = data.planes.filter(w => estadoGarantia(w.end_date) !== 'expired');
-    const vigSer = data.seriales.filter(s => estadoGarantia(s.end_date) !== 'expired');
+    const vigPlanes = planesR.filter(w => estadoGarantia(w.end_date) !== 'expired');
+    const vigSer = serialesR.filter(s => estadoGarantia(s.end_date) !== 'expired');
     const kpi = {
       equipos: vigSer.length,
       planes: vigPlanes.length,
@@ -152,8 +235,8 @@ export function Warranties() {
       equiposPorVencer: vigSer.filter(s => estadoGarantia(s.end_date) === 'expiring').length,
       estimados: vigPlanes.filter(w => w.start_source === 'so_date').length,
     };
-    return { planes, seriales, clientes, kpi };
-  }, [data, q, filtro]);
+    return { planes, seriales, clientes, regiones, kpi };
+  }, [data, q, filtro, region]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
 
@@ -163,12 +246,16 @@ export function Warranties() {
     try { await exportarExcel(v.planes, v.seriales); } finally { setExportando(false); }
   };
 
+  const regionesPresentes = v
+    ? [...new Set(v.regiones.map(r => r.region))]
+    : [];
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-sans font-semibold text-white">Warranties</h1>
         <p className="text-xs text-muted font-mono mt-0.5">
-          Service plan coverage by end customer — from the plan lines on each sales order
+          Device-by-device service plan coverage — exact dates, plan type and the region responsible
         </p>
       </div>
 
@@ -190,7 +277,7 @@ export function Warranties() {
       <div className="flex items-center gap-2 flex-wrap">
         <input
           type="search"
-          placeholder="End customer, distributor, SO #, serial or plan SKU…"
+          placeholder="Serial, end customer, distributor, SO # or plan SKU…"
           value={q}
           onChange={e => setQ(e.target.value)}
           className="bg-card border border-white/[0.12] rounded px-3 py-2 text-sm font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50 w-full sm:w-80"
@@ -205,7 +292,7 @@ export function Warranties() {
           ))}
         </div>
         <div className="flex items-center gap-1 sm:ml-auto">
-          {[['customers', 'By customer'], ['coverages', 'By coverage'], ['devices', 'By device']].map(([k, label]) => (
+          {VISTAS.map(([k, label]) => (
             <button key={k} onClick={() => setVista(k)}
               className={`px-2.5 py-1.5 rounded text-[11px] font-mono border transition-colors ${
                 vista === k
@@ -215,11 +302,25 @@ export function Warranties() {
             </button>
           ))}
           <button onClick={exportar} disabled={exportando}
-            title="Dos hojas: coberturas y equipos, con el filtro actual aplicado"
+            title="Dos hojas: equipos y coberturas, con el filtro actual aplicado"
             className="px-3 py-1.5 rounded border border-white/[0.12] text-[11px] font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
             {exportando ? 'Exporting…' : 'Export Excel'}
           </button>
         </div>
+      </div>
+
+      {/* Filtro por región responsable (aplica a todas las vistas) */}
+      <div className="flex items-center gap-1 flex-wrap">
+        <span className="text-[10px] text-muted font-mono uppercase tracking-widest mr-1">Region</span>
+        {['all', ...regionesPresentes].map(r => (
+          <button key={r} onClick={() => setRegion(r)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-mono border transition-colors ${
+              region === r
+                ? 'border-accent/60 bg-accent/10 text-accent'
+                : 'border-white/[0.1] text-muted hover:text-white'}`}>
+            {r === 'all' ? 'All' : r}
+          </button>
+        ))}
       </div>
 
       {data?.falta && (
@@ -230,14 +331,20 @@ export function Warranties() {
 
       {loading || !v ? <TableSkeleton rows={10} cols={6} /> : (
         <>
+          {vista === 'devices' && <TablaEquipos seriales={v.seriales} />}
+          {vista === 'regions' && (
+            <TablaRegiones regiones={v.regiones}
+              onElegir={r => { setRegion(r); setVista('devices'); }} />
+          )}
           {vista === 'customers' && <TablaClientes clientes={v.clientes} />}
           {vista === 'coverages' && <TablaCoberturas planes={v.planes} />}
-          {vista === 'devices' && <TablaEquipos seriales={v.seriales} />}
 
           <p className="text-[10px] text-muted font-mono leading-relaxed">
             Coverage lives on the sales order line in NetSuite, not on the serial.
-            “Billed to” is the account that bought it — usually a distributor; the end
-            customer is a field someone fills in by hand, so it is missing on many
+            “Billed to” is the account that bought it — usually a distributor — and the
+            region comes from that account (Westbase → EMEA, ScanSource → Americas,
+            JMACS → Japan…); accounts the map doesn’t know yet show as Unassigned. The
+            end customer is a field someone fills in by hand, so it is missing on many
             recent orders. A “~” means the start date was estimated from the SO date
             because no sold date was recorded. The serial count per coverage is what
             NetSuite actually lists: it is often lower than the units covered, either
@@ -278,14 +385,140 @@ function Encabezados({ cols }) {
   );
 }
 
+// ── Por equipo: una fila por serial, con fechas exactas y el plan ──────────
+function TablaEquipos({ seriales }) {
+  return (
+    <Panel>
+      <table className="w-full text-xs">
+        <Encabezados cols={['Serial', 'Item', 'Plan', 'Region',
+                            'Warranty start', 'Warranty end', 'Status',
+                            'End customer', 'Billed to']} />
+        <tbody>
+          {seriales.length === 0 ? <Vacio cols={9}>Nothing matches</Vacio> : seriales.slice(0, 500).map(s => {
+            const dias = diasHasta(s.end_date);
+            const vencido = estadoGarantia(s.end_date) === 'expired';
+            return (
+              <tr key={`${s.serial}-${s.so_number}`} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+                <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">
+                  <Link to={`/serials?q=${s.serial}`} className="hover:text-accent">{s.serial}</Link>
+                  {s.so_number && (
+                    <Link to={`/backlog?so=${s.so_number}`}
+                      className="block text-[10px] text-muted hover:text-accent">{s.so_number}</Link>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{s.sku}</td>
+                <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
+                  {s.plan_sku ?? <span className="text-muted">—</span>}
+                  {s.plan_years && <span className="text-muted opacity-70"> · {s.plan_years}y</span>}
+                </td>
+                <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                  <span className={s.region === 'Unassigned' ? 'text-muted' : 'text-slate-300'}>
+                    {s.region}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
+                  {s.start_date}
+                  {s.start_source === 'so_date' && (
+                    <span className="text-muted" title="estimated from the SO date">~</span>
+                  )}
+                </td>
+                <td className={`px-4 py-2.5 font-mono whitespace-nowrap ${
+                  vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}`}>
+                  {s.end_date}
+                  {!vencido && dias <= DIAS_POR_VENCER && <span> · {dias}d</span>}
+                </td>
+                <td className="px-4 py-2.5"><WarrantyBadge w={s} compact /></td>
+                <td className="px-4 py-2.5 font-sans max-w-[220px] truncate" title={s.end_customer || 'not recorded'}>
+                  {s.end_customer
+                    ? <span className="text-white">{s.end_customer}</span>
+                    : <span className="text-muted">—</span>}
+                </td>
+                <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[200px] truncate"
+                  title={s.customer}>{nombreCuenta(s.customer)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {seriales.length > 500 && (
+        <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
+          Showing the first 500 of {seriales.length.toLocaleString()} — narrow the search or use Export Excel.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+// ── Por región: quién es responsable de qué zona y cuánto vence ───────────
+function TablaRegiones({ regiones, onElegir }) {
+  return (
+    <Panel>
+      <table className="w-full text-xs">
+        <Encabezados cols={['Region', 'Devices in warranty', `Expiring ≤${DIAS_POR_VENCER}d`,
+                            'Expired', 'Active coverages', 'Units covered',
+                            'Responsible distributors', 'Next expiry']} />
+        <tbody>
+          {regiones.length === 0 ? (
+            <Vacio cols={8}>The warranties tables are still empty</Vacio>
+          ) : regiones.map(g => {
+            const dias = g.proximo ? diasHasta(g.proximo) : null;
+            const dist = [...g.dist].sort();
+            return (
+              <tr key={g.region}
+                onClick={() => onElegir(g.region)}
+                title={`Show ${g.region} devices`}
+                className="border-b border-white/[0.04] hover:bg-white/[0.03] cursor-pointer transition-colors">
+                <td className="px-4 py-2.5 font-sans font-medium whitespace-nowrap">
+                  <span className={g.region === 'Unassigned' ? 'text-muted' : 'text-white'}>
+                    {g.region}
+                  </span>
+                  {g.region === 'Unassigned' && (
+                    <span className="block text-[10px] font-mono text-muted">
+                      accounts the region map doesn’t know yet
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 font-num text-white">{g.equiposVig || '—'}</td>
+                <td className="px-4 py-2.5 font-num">
+                  {g.porVencer
+                    ? <span className="text-warning">{g.porVencer}</span>
+                    : <span className="text-muted">—</span>}
+                </td>
+                <td className="px-4 py-2.5 font-num text-muted">{g.vencidos || '—'}</td>
+                <td className="px-4 py-2.5 font-num text-slate-300">{g.planesVig || '—'}</td>
+                <td className="px-4 py-2.5 font-num text-slate-300">{g.unidades || '—'}</td>
+                <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[340px] truncate"
+                  title={dist.join(', ')}>
+                  {dist.slice(0, 3).join(' · ')}{dist.length > 3 ? ` +${dist.length - 3}` : ''}
+                </td>
+                <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                  {g.proximo
+                    ? <span className={dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}>
+                        {g.proximo}{dias <= DIAS_POR_VENCER ? ` · ${dias}d` : ''}
+                      </span>
+                    : <span className="text-muted">—</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
+        Region comes from the billed-to account (the distributor responsible for the zone).
+        Click a row to see its devices. To assign an Unassigned account, add it to src/utils/region.js.
+      </p>
+    </Panel>
+  );
+}
+
 function TablaClientes({ clientes }) {
   return (
     <Panel>
       <table className="w-full text-xs">
-        <Encabezados cols={['Customer', 'Devices', 'Coverages', 'Units', 'Plans', 'Next expiry']} />
+        <Encabezados cols={['Customer', 'Region', 'Devices', 'Coverages', 'Units', 'Plans', 'Next expiry']} />
         <tbody>
           {clientes.length === 0 ? (
-            <Vacio cols={6}>Nothing matches — or the warranties tables are still empty</Vacio>
+            <Vacio cols={7}>Nothing matches — or the warranties tables are still empty</Vacio>
           ) : clientes.map(g => {
             const dias = g.proximo ? diasHasta(g.proximo) : null;
             return (
@@ -299,6 +532,7 @@ function TablaClientes({ clientes }) {
                       : 'distributor — end customer not recorded'}
                   </p>
                 </td>
+                <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">{g.region}</td>
                 <td className="px-4 py-2.5 font-num text-white">{g.equipos.size || '—'}</td>
                 <td className="px-4 py-2.5 font-num text-slate-300">{g.planes}</td>
                 <td className="px-4 py-2.5 font-num text-slate-300">{g.unidades}</td>
@@ -324,9 +558,9 @@ function TablaCoberturas({ planes }) {
   return (
     <Panel>
       <table className="w-full text-xs">
-        <Encabezados cols={['SO', 'End customer', 'Billed to', 'Plan', 'Qty', 'Coverage', 'Status']} />
+        <Encabezados cols={['SO', 'Region', 'End customer', 'Billed to', 'Plan', 'Qty', 'Coverage', 'Status']} />
         <tbody>
-          {planes.length === 0 ? <Vacio cols={7}>Nothing matches</Vacio> : planes.slice(0, 500).map((w, i) => (
+          {planes.length === 0 ? <Vacio cols={8}>Nothing matches</Vacio> : planes.slice(0, 500).map((w, i) => (
             <tr key={`${w.so_number}-${w.sku}-${i}`} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
               <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                 <Link to={`/backlog?so=${w.so_number}`} className="text-accent hover:text-accent/80">
@@ -334,6 +568,7 @@ function TablaCoberturas({ planes }) {
                 </Link>
                 <span className="block text-[10px] text-muted">{w.so_date}</span>
               </td>
+              <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">{w.region}</td>
               <td className="px-4 py-2.5 font-sans max-w-[220px] truncate"
                 title={w.end_customer || 'not recorded in NetSuite'}>
                 {w.end_customer
@@ -369,43 +604,6 @@ function TablaCoberturas({ planes }) {
       {planes.length > 500 && (
         <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
           Showing the first 500 of {planes.length.toLocaleString()} — narrow the search or use Export Excel.
-        </p>
-      )}
-    </Panel>
-  );
-}
-
-function TablaEquipos({ seriales }) {
-  return (
-    <Panel>
-      <table className="w-full text-xs">
-        <Encabezados cols={['Serial', 'Item', 'End customer', 'Billed to', 'Coverage', 'Status']} />
-        <tbody>
-          {seriales.length === 0 ? <Vacio cols={6}>Nothing matches</Vacio> : seriales.slice(0, 500).map(s => (
-            <tr key={s.serial} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
-              <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">
-                <Link to={`/serials?q=${s.serial}`} className="hover:text-accent">{s.serial}</Link>
-                {s.so_number && <span className="block text-[10px] text-muted">{s.so_number}</span>}
-              </td>
-              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">{s.sku}</td>
-              <td className="px-4 py-2.5 font-sans max-w-[220px] truncate" title={s.end_customer || 'not recorded'}>
-                {s.end_customer
-                  ? <span className="text-white">{s.end_customer}</span>
-                  : <span className="text-muted">—</span>}
-              </td>
-              <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[200px] truncate"
-                title={s.customer}>{nombreCuenta(s.customer)}</td>
-              <td className="px-4 py-2.5 font-mono text-muted whitespace-nowrap">
-                {s.start_date} → {s.end_date}
-              </td>
-              <td className="px-4 py-2.5"><WarrantyBadge w={s} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {seriales.length > 500 && (
-        <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
-          Showing the first 500 of {seriales.length.toLocaleString()} — narrow the search or use Export Excel.
         </p>
       )}
     </Panel>

@@ -96,6 +96,12 @@ service plan; ver regla abajo).
 
 ## Historia reciente (resumen de contexto)
 
+- 14/10/2026: Warranties reorganizada: vista por serial (default) con fechas
+  exactas y tipo de plan, tab y filtro por región responsable. La región sale
+  de la cuenta facturada vía `src/utils/region.js` (Westbase→EMEA,
+  ScanSource/NSW→Americas, JMACS/MMTS→Japan…); cuentas sin mapear quedan en
+  "Unassigned" — para asignarlas se agrega un patrón a REGLAS en ese archivo.
+
 - 10/2026: garantías / service plans. Fuente nueva en el pipeline
   (`bajar_warranties` → `warranties` / `warranty_serials`), página
   `/warranties` (por cliente final, por cobertura y por equipo) y badge de
