@@ -303,7 +303,7 @@ export function Warranties() {
             </button>
           ))}
           <button onClick={exportar} disabled={exportando}
-            title="Dos hojas: equipos y coberturas, con el filtro actual aplicado"
+            title="Two sheets — devices and coverages, with the current filter applied"
             className="px-3 py-1.5 rounded border border-white/[0.12] text-[11px] font-mono text-slate-300 hover:text-white hover:border-accent/50 disabled:opacity-60 transition-colors whitespace-nowrap">
             {exportando ? 'Exporting…' : 'Export Excel'}
           </button>

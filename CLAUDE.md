@@ -96,6 +96,17 @@ service plan; ver regla abajo).
 
 ## Historia reciente (resumen de contexto)
 
+- 16/10/2026: Subscriptions ahora se alimenta SOLO de NetSuite: el record custom
+  `customrecord_dv` (Device Registration, el que llena mrSspUpdate/script 3899
+  con los registros de Launchpad) se baja en cada corrida como
+  DeviceRegistrations.xls (comando `device_reg`, tolerado) y
+  subir_launchpad.py lo prefiere sobre el CSV de Retool (que queda de
+  contingencia). Campos clave: custrecord_dv_serial_number, _dv_item (device),
+  _dv_service_pack_item (plan), _dr_service_pack_start/end_date,
+  _dr_service_and_support_expire (la fecha que usa Ari/Hercules). La pagina
+  suma grafico de vencimientos por mes y busqueda con contexto (expande el
+  grupo y resalta el serial en amarillo).
+
 - 15/10/2026: página Subscriptions nueva (separada de Warranties): suscripciones
   pagas por device desde Launchpad (tabla `launchpad_subs`, carga semi-manual:
   export de Retool `SSP_reg*.csv` en la carpeta del pipeline →

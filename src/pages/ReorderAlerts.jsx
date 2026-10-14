@@ -293,7 +293,7 @@ export function ReorderAlerts() {
                                 const alDestinoCorrecto = whCorto(t.destination_location) === (row.lowWh === 'Portland' ? 'PDX' : 'HK');
                                 return (
                                   <div key={`t${i}`} className={`whitespace-nowrap ${alDestinoCorrecto ? 'text-success' : 'text-slate-300'}`}
-                                    title={alDestinoCorrecto ? 'Transfer en camino al depósito que está bajo' : 'Transfer en camino, pero a otro depósito'}>
+                                    title={alDestinoCorrecto ? 'Transfer on its way to the warehouse that is low' : 'Transfer on its way, but to a different warehouse'}>
                                     {t.transfer_order_number} · {(t.qty_open ?? 0).toLocaleString()} u → {whCorto(t.destination_location)}
                                   </div>
                                 );

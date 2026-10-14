@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase, paginar } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
@@ -96,6 +96,66 @@ function Badge({ end }) {
   );
 }
 
+
+// ── Vencimientos por mes (portado del sandbox) ─────────────────────────────
+// Barras de un solo tono: pasado apagado, ventana de 90 dias en ambar, resto
+// en acento. Tooltip nativo por barra; etiquetas solo en los picos.
+function GraficoVencimientos({ filas, titulo }) {
+  const svg = useMemo(() => {
+    const por = new Map();
+    for (const r of filas) {
+      const m = (r.end_date ?? '').slice(0, 7);
+      if (m) por.set(m, (por.get(m) ?? 0) + 1);
+    }
+    const meses = [...por.keys()].sort();
+    if (!meses.length) return null;
+    const max = Math.max(...por.values());
+    const hoy = HOY();
+    const mesHoy = hoy.slice(0, 7);
+    const d90 = new Date(`${hoy}T00:00:00Z`);
+    d90.setUTCDate(d90.getUTCDate() + DIAS_POR_VENCER);
+    const mes90 = d90.toISOString().slice(0, 7);
+    const bw = 24, gap = 2, H = 120, pad = 6;
+    const W = pad * 2 + meses.length * (bw + gap);
+    return { meses, por, max, mesHoy, mes90, bw, gap, H, pad, W };
+  }, [filas]);
+
+  if (!svg) return null;
+  const { meses, por, max, mesHoy, mes90, bw, gap, H, pad, W } = svg;
+  return (
+    <div className="bg-card rounded-lg border border-white/[0.08] p-4">
+      <p className="text-[10px] text-muted font-mono uppercase tracking-widest mb-2">{titulo}</p>
+      <div className="overflow-x-auto">
+        <svg width={W} height={H + 34} role="img" aria-label={titulo} className="block">
+          {meses.map((m, i) => {
+            const v = por.get(m);
+            const h = Math.max(3, Math.round((v / max) * H));
+            const x = pad + i * (bw + gap);
+            const y = H - h + 6;
+            const fill = m < mesHoy ? '#64748b' : m <= mes90 ? '#f59e0b' : '#38bdf8';
+            return (
+              <g key={m}>
+                <rect x={x} y={y} width={bw} height={h} rx="3" fill={fill}
+                  opacity={m < mesHoy ? 0.4 : 0.9}>
+                  <title>{`${m}: ${v} ${v === 1 ? 'subscription ends' : 'subscriptions end'}`}</title>
+                </rect>
+                {v >= max * 0.6 && (
+                  <text x={x + bw / 2} y={y - 4} textAnchor="middle"
+                    className="fill-slate-400" fontSize="9" fontFamily="monospace">{v}</text>
+                )}
+                {i % 3 === 0 && (
+                  <text x={x + bw / 2} y={H + 22} textAnchor="middle"
+                    className="fill-slate-500" fontSize="8" fontFamily="monospace">{m}</text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 export function Subscriptions() {
   const [q, setQ] = useState('');
   const [filtro, setFiltro] = useState('vigentes');
@@ -112,7 +172,19 @@ export function Subscriptions() {
     for (const r of pagasTodo) r.renovado = porSerial.get(r.serial) > 1;
 
     const test = FILTROS[filtro].test;
-    const devices = pagasTodo.filter(r => test(estadoGarantia(r.end_date)) && coincide(r, q));
+    // Searching keeps context: groups (end date + customer) with a match stay
+    // WHOLE — every sibling serial visible — and the matches get highlighted,
+    // instead of stripping the serial out of its surroundings.
+    const base = pagasTodo.filter(r => test(estadoGarantia(r.end_date)));
+    let devices;
+    if (q) {
+      const clave = r => `${r.end_date}|${(r.customer ?? '').trim() || '(no customer recorded)'}`;
+      const grupos = new Set(base.filter(r => coincide(r, q)).map(clave));
+      devices = base.filter(r => grupos.has(clave(r)))
+        .map(r => ({ ...r, hit: coincide(r, q) }));
+    } else {
+      devices = base;
+    }
     const software = data.sw.filter(r => test(estadoGarantia(r.end_date)) && coincide(r, q));
 
     const vig = pagasTodo.filter(r => estadoGarantia(r.end_date) !== 'expired');
@@ -124,7 +196,7 @@ export function Subscriptions() {
       swVig: data.sw.filter(r => estadoGarantia(r.end_date) !== 'expired').length,
       estandar: data.lp.length - pagasTodo.length,
     };
-    return { devices, software, kpi };
+    return { devices, software, kpi, pagasTodo };
   }, [data, q, filtro]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
@@ -156,6 +228,14 @@ export function Subscriptions() {
           <KPICard label="Software (Device Pro)" value={v.kpi.swVig.toLocaleString()}
             sub="active · from NetSuite" />
         </div>
+      )}
+
+      {v && (
+        <GraficoVencimientos
+          filas={vista === 'software' ? data.sw : v.pagasTodo}
+          titulo={vista === 'software'
+            ? 'Device Pro expirations by month'
+            : 'Device subscription expirations by month'} />
       )}
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -200,7 +280,7 @@ export function Subscriptions() {
 
       {loading || !v ? <TableSkeleton rows={10} cols={7} /> : (
         <>
-          {vista === 'devices' && <TablaDevices filas={v.devices} />}
+          {vista === 'devices' && <TablaDevices filas={v.devices} q={q} />}
           {vista === 'software' && <TablaSoftware filas={v.software} />}
 
           <p className="text-[10px] text-muted font-mono leading-relaxed">
@@ -249,8 +329,10 @@ function Vacio({ cols, children }) {
 // Agrupado como lo lee Supply Chain: la FECHA DE FIN manda, adentro el
 // cliente final, y adentro del cliente cada serial con su device. Los grupos
 // de clientes arrancan abiertos; el botón los colapsa.
-function TablaDevices({ filas }) {
+function TablaDevices({ filas, q }) {
   const [cerrados, setCerrados] = useState(() => new Set());
+  // Una busqueda nueva reabre todo, asi el serial resaltado siempre se ve
+  useEffect(() => { setCerrados(new Set()); }, [q]);
 
   const grupos = useMemo(() => {
     const porFecha = new Map();
@@ -355,7 +437,10 @@ function TablaDevices({ filas }) {
                       {regs.map(r => (
                         <Link key={r.id} to={`/serials?q=${r.serial}`}
                           title={`${r.device ?? 'device unknown'}${r.renovado ? ' · renewed' : ''} · sold ${r.date_of_sale}`}
-                          className="font-mono text-[11px] px-2 py-0.5 rounded bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08] transition-colors">
+                          className={`font-mono text-[11px] px-2 py-0.5 rounded transition-colors ${
+                            r.hit
+                              ? 'bg-warning/25 text-warning ring-1 ring-warning/60 hover:bg-warning/30'
+                              : 'bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08]'}`}>
                           {r.serial}
                           <span className="text-muted"> · {r.device ?? '?'}</span>
                           {ventas.length > 1 && <span className="text-muted opacity-70"> · {r.date_of_sale}</span>}
