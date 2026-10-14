@@ -159,6 +159,12 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
 
+- 14/10/2026: gráfico de vencimientos (`ExpiryChart`, Subscriptions y
+  Warranties) muestra SOLO lo que viene: desde el mes actual, meses corridos
+  hasta 24 (lo posterior suma en una barra "later"), ancho completo, número
+  sobre cada barra, ámbar = ventana ≤90d (conteo exacto por fecha en la
+  leyenda), celeste = después. Tomas: lo pasado achicaba todo y no servía.
+
 - 14/10/2026: **Warranties con el mismo seguimiento.** Componente compartido
   `src/components/FollowUp.jsx` (estados, editor, pastilla, filtro, guardar,
   CSV) usado por Subscriptions y Warranties — cambiar ahí, no copiar. Tabla
