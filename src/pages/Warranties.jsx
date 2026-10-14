@@ -1,4 +1,5 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ExpiryChart } from '../components/ExpiryChart';
 import { Link } from 'react-router-dom';
 import { supabase, paginar } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
@@ -152,7 +153,18 @@ export function Warranties() {
     const test = FILTROS[filtro].test;
     const enRegion = r => region === 'all' || r.region === region;
     const planes = planesR.filter(w => test(estadoGarantia(w.end_date)) && coincide(w, q) && enRegion(w));
-    const seriales = serialesR.filter(s => test(estadoGarantia(s.end_date)) && coincide(s, q) && enRegion(s));
+    // Busqueda con contexto (igual que Subscriptions): el grupo fecha+cliente
+    // que contiene el match se muestra ENTERO y el serial se resalta.
+    const baseSer = serialesR.filter(s => test(estadoGarantia(s.end_date)) && enRegion(s));
+    let seriales;
+    if (q) {
+      const claveG = s => `${s.end_date}|${(clienteFinal(s) ?? nombreCuenta(s.customer)) || '—'}`;
+      const grupos = new Set(baseSer.filter(s => coincide(s, q)).map(claveG));
+      seriales = baseSer.filter(s => grupos.has(claveG(s)))
+        .map(s => ({ ...s, hit: coincide(s, q) }));
+    } else {
+      seriales = baseSer;
+    }
 
     // Resumen por región: sobre TODO el histórico (sin búsqueda ni filtro de
     // estado) — es el mapa de responsabilidades, no una vista filtrada.
@@ -236,7 +248,7 @@ export function Warranties() {
       equiposPorVencer: vigSer.filter(s => estadoGarantia(s.end_date) === 'expiring').length,
       estimados: vigPlanes.filter(w => w.start_source === 'so_date').length,
     };
-    return { planes, seriales, clientes, regiones, kpi };
+    return { planes, seriales, clientes, regiones, kpi, serialesTodos: serialesR };
   }, [data, q, filtro, region]);
 
   if (error) return <QueryError message={error} onRetry={refetch} />;
@@ -324,6 +336,10 @@ export function Warranties() {
         ))}
       </div>
 
+      {v && vista === 'devices' && (
+        <ExpiryChart filas={v.serialesTodos} titulo="Warranty expirations by month (identified devices)" />
+      )}
+
       {data?.falta && (
         <p className="text-xs font-mono text-warning bg-warning/5 border border-warning/20 rounded px-3 py-2">
           Warranty tables not created yet — run SQL_warranties.sql in Supabase, then one pipeline run.
@@ -332,7 +348,7 @@ export function Warranties() {
 
       {loading || !v ? <TableSkeleton rows={10} cols={6} /> : (
         <>
-          {vista === 'devices' && <TablaEquipos seriales={v.seriales} />}
+          {vista === 'devices' && <TablaEquipos seriales={v.seriales} q={q} />}
           {vista === 'regions' && (
             <TablaRegiones regiones={v.regiones}
               onElegir={r => { setRegion(r); setVista('devices'); }} />
@@ -386,132 +402,129 @@ function Encabezados({ cols }) {
   );
 }
 
-// ── Por equipo: agrupado por SO + cobertura, expandible serial por serial ──
-// Las órdenes grandes traen decenas de seriales con el mismo plan y las
-// mismas fechas: agrupados ocupan UNA fila, y el botón las expande para ver
-// cada serial. Un grupo de 1 se muestra directo como fila simple.
-function TablaEquipos({ seriales }) {
-  const [abiertos, setAbiertos] = useState(() => new Set());
+// ── Por equipo: fecha de fin → end customer → seriales (misma estructura que
+// Subscriptions). Los grupos arrancan abiertos; una búsqueda nueva los reabre
+// y resalta en amarillo los seriales que matchean.
+function TablaEquipos({ seriales, q }) {
+  const [cerrados, setCerrados] = useState(() => new Set());
+  useEffect(() => { setCerrados(new Set()); }, [q]);
 
   const grupos = useMemo(() => {
-    const m = new Map();
+    const porFecha = new Map();
     for (const s of seriales) {
-      const k = `${s.so_number ?? '—'}|${s.plan_sku ?? ''}|${s.start_date}|${s.end_date}`;
-      if (!m.has(k)) {
-        m.set(k, {
-          k, so: s.so_number, plan_sku: s.plan_sku, plan_years: s.plan_years,
-          start_date: s.start_date, end_date: s.end_date, start_source: s.start_source,
-          region: s.region, end_customer: s.end_customer, customer: s.customer,
-          sku: s.plan_sku, so_number: s.so_number, // para WarrantyBadge
-          items: new Set(), filas: [],
-        });
-      }
-      const g = m.get(k);
-      if (s.sku) g.items.add(s.sku);
-      g.filas.push(s);
+      if (!porFecha.has(s.end_date)) porFecha.set(s.end_date, new Map());
+      const pc = porFecha.get(s.end_date);
+      const k = (clienteFinal(s) ?? nombreCuenta(s.customer)) || '—';
+      if (!pc.has(k)) pc.set(k, []);
+      pc.get(k).push(s);
     }
-    return [...m.values()];
+    return [...porFecha.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([fecha, m]) => ({
+        fecha,
+        total: [...m.values()].reduce((n, v) => n + v.length, 0),
+        clientes: [...m.entries()]
+          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])),
+      }));
   }, [seriales]);
 
-  const alternar = k => setAbiertos(prev => {
+  const alternar = k => setCerrados(prev => {
     const n = new Set(prev);
     if (n.has(k)) n.delete(k); else n.add(k);
     return n;
   });
 
+  if (grupos.length === 0) {
+    return (
+      <div className="bg-card rounded-lg border border-white/[0.08] px-4 py-8 text-center text-muted font-mono text-xs">
+        Nothing matches — or the warranty tables are still empty
+      </div>
+    );
+  }
+
   return (
-    <Panel>
-      <table className="w-full text-xs">
-        <Encabezados cols={['Devices', 'Item', 'Plan', 'Region',
-                            'Warranty start', 'Warranty end', 'Status',
-                            'End customer', 'Billed to']} />
-        <tbody>
-          {grupos.length === 0 ? <Vacio cols={9}>Nothing matches</Vacio> : grupos.slice(0, 300).map(g => {
-            const dias = diasHasta(g.end_date);
-            const vencido = estadoGarantia(g.end_date) === 'expired';
-            const abierto = abiertos.has(g.k);
-            const varios = g.filas.length > 1;
-            const items = [...g.items];
-            return (
-              <Fragment key={g.k}>
-                <tr className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
-                  <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-                    {varios ? (
-                      <button onClick={() => alternar(g.k)}
-                        className="flex items-center gap-1.5 text-white hover:text-accent transition-colors"
-                        title={abierto ? 'Hide serial numbers' : 'Show all serial numbers'}>
-                        <span className={`inline-block transition-transform text-[10px] ${abierto ? 'rotate-90' : ''}`}>▶</span>
-                        {g.filas.length} devices
-                      </button>
-                    ) : (
-                      <Link to={`/serials?q=${g.filas[0].serial}`} className="text-white hover:text-accent">
-                        {g.filas[0].serial}
-                      </Link>
-                    )}
-                    {g.so && (
-                      <Link to={`/backlog?so=${g.so}`}
-                        className="block text-[10px] text-muted hover:text-accent">{g.so}</Link>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-muted max-w-[140px] truncate"
-                    title={items.join(', ')}>{items.join(' · ') || '—'}</td>
-                  <td className="px-4 py-2.5 whitespace-nowrap">
-                    <span className="font-mono text-slate-300">{g.plan_sku ?? <span className="text-muted">—</span>}</span>
-                    {g.plan_sku && (
-                      <span className="block text-[10px] font-sans text-muted">{planLabel(g.plan_sku)}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-                    <span className={g.region === 'Unassigned' ? 'text-muted' : 'text-slate-300'}>
-                      {g.region}
+    <div className="space-y-3">
+      {grupos.slice(0, 80).map(g => {
+        const dias = diasHasta(g.fecha);
+        const vencido = estadoGarantia(g.fecha) === 'expired';
+        return (
+          <section key={g.fecha} className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+            <header className="flex items-baseline gap-3 px-4 py-2.5 border-b border-white/[0.06] bg-white/[0.02]">
+              <span className={`font-mono font-semibold text-sm ${
+                vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-white'}`}>
+                {g.fecha}
+              </span>
+              <span className={`font-mono text-[11px] ${
+                vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-400'}`}>
+                {vencido ? 'expired' : `in ${dias}d`}
+              </span>
+              <span className="ml-auto font-mono text-[11px] text-muted">
+                {g.total} {g.total === 1 ? 'device' : 'devices'} · {g.clientes.length} {g.clientes.length === 1 ? 'customer' : 'customers'}
+              </span>
+            </header>
+            {g.clientes.map(([cliente, regs]) => {
+              const k = `${g.fecha}|${cliente}`;
+              const abierto = !cerrados.has(k);
+              const inicios = [...new Set(regs.map(r => r.start_date))].sort();
+              const planes = [...new Set(regs.map(r => r.plan_sku).filter(Boolean))];
+              const regiones = [...new Set(regs.map(r => r.region))];
+              const esFinal = Boolean(clienteFinal(regs[0]));
+              const cuentas = [...new Set(regs.map(r => nombreCuenta(r.customer)))];
+              return (
+                <div key={k} className="border-t border-white/[0.04]">
+                  <button onClick={() => alternar(k)}
+                    className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
+                    <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
+                    <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
+                    <span className="font-mono text-[10px] text-muted whitespace-nowrap">
+                      {regs.length} {regs.length === 1 ? 'device' : 'devices'}
+                      {planes.length > 0 && ` · ${planes.join('/')}`}
+                      {' · '}
+                      <span className="text-slate-300">
+                        start {inicios[0]}{inicios.length > 1 ? ` … ${inicios[inicios.length - 1]}` : ''}
+                      </span>
+                      {' · '}{regiones.join('/')}
                     </span>
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-slate-300 whitespace-nowrap">
-                    {g.start_date}
-                    {g.start_source === 'so_date' && (
-                      <span className="text-muted" title="estimated from the SO date">~</span>
-                    )}
-                  </td>
-                  <td className={`px-4 py-2.5 font-mono whitespace-nowrap ${
-                    vencido ? 'text-muted' : dias <= DIAS_POR_VENCER ? 'text-warning' : 'text-slate-300'}`}>
-                    {g.end_date}
-                    {!vencido && dias <= DIAS_POR_VENCER && <span> · {dias}d</span>}
-                  </td>
-                  <td className="px-4 py-2.5"><WarrantyBadge w={g} compact /></td>
-                  <td className="px-4 py-2.5 font-sans max-w-[220px] truncate" title={g.end_customer || 'not recorded'}>
-                    {g.end_customer
-                      ? <span className="text-white">{g.end_customer}</span>
-                      : <span className="text-muted">—</span>}
-                  </td>
-                  <td className="px-4 py-2.5 font-sans text-slate-300 max-w-[200px] truncate"
-                    title={g.customer}>{nombreCuenta(g.customer)}</td>
-                </tr>
-                {varios && abierto && (
-                  <tr className="border-b border-white/[0.04]">
-                    <td colSpan={9} className="px-4 py-2.5 bg-white/[0.02]">
+                    <span className="ml-auto font-sans text-[10px] text-muted truncate max-w-[180px] hidden lg:inline"
+                      title={cuentas.join(', ')}>
+                      {esFinal ? `via ${cuentas.join(', ')}` : 'distributor — end customer not recorded'}
+                    </span>
+                  </button>
+                  {abierto && (
+                    <div className="px-4 pb-2.5 pl-10">
+                      {planes.length > 0 && (
+                        <p className="text-[10px] font-mono text-muted mb-1.5">
+                          {planes.map(planLabel).join(' · ')}
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-1.5">
-                        {g.filas.map(s => (
-                          <Link key={s.serial} to={`/serials?q=${s.serial}`}
-                            title={s.sku}
-                            className="font-mono text-[11px] px-2 py-0.5 rounded bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08] transition-colors">
-                            {s.serial}{items.length > 1 && <span className="text-muted"> · {s.sku}</span>}
+                        {regs.map(s => (
+                          <Link key={`${s.serial}-${s.so_number}`} to={`/serials?q=${s.serial}`}
+                            title={`${s.sku ?? ''}${s.so_number ? ` · ${s.so_number}` : ''}${s.start_source === 'so_date' ? ' · start estimated' : ''}`}
+                            className={`font-mono text-[11px] px-2 py-0.5 rounded transition-colors ${
+                              s.hit
+                                ? 'bg-warning/25 text-warning ring-1 ring-warning/60 hover:bg-warning/30'
+                                : 'bg-white/[0.05] text-slate-300 hover:text-accent hover:bg-white/[0.08]'}`}>
+                            {s.serial}
+                            <span className="text-muted"> · {s.sku ?? '?'}</span>
+                            {s.start_source === 'so_date' && <span className="text-muted opacity-70">~</span>}
                           </Link>
                         ))}
                       </div>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-      {grupos.length > 300 && (
-        <p className="px-4 py-2 text-[10px] text-muted font-mono border-t border-white/[0.06]">
-          Showing the first 300 of {grupos.length.toLocaleString()} coverages — narrow the search or use Export Excel.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        );
+      })}
+      {grupos.length > 80 && (
+        <p className="text-[10px] text-muted font-mono">
+          Showing the first 80 of {grupos.length} end dates — narrow the search or use Export Excel.
         </p>
       )}
-    </Panel>
+    </div>
   );
 }
 
