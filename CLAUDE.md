@@ -141,6 +141,19 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   not_found) y la página Sell-out lo muestra en cada serial + KPI "Not
   matching NetSuite".
 
+- 14/10/2026: página **Device Data Health** (`/data-health`, Support), para
+  Dirección/Channel. Universo = seriales del sell-out; por cada uno: ¿se sabe
+  el end customer y en qué sistema (NetSuite / Launchpad / solo Excel /
+  nadie)?, ¿hay cobertura registrada (plan en NetSuite o registro en
+  Launchpad)?, ¿el serial cierra con NetSuite (`ns_match`)?, ¿Launchpad y el
+  Excel dicen el mismo cliente? KPIs + bloque fijo "Where each fact lives"
+  (verde automático / ámbar export manual / rojo solo Excel; `FUENTES` en
+  DataHealth.jsx, actualizar cuando cambie el proceso) + tabla por
+  distribuidor expandible a los seriales de cada problema + suscripciones
+  facturadas que el disti nunca reportó vendidas + export serial por serial.
+  Todo se calcula en vivo desde Supabase; nada estimado. Regla: esta página
+  NO reemplaza a Sell-out/Subscriptions (operativas); es el diagnóstico.
+
 - 16/10/2026: Subscriptions ahora se alimenta SOLO de NetSuite: el record custom
   `customrecord_dv` (Device Registration, el que llena mrSspUpdate/script 3899
   con los registros de Launchpad) se baja en cada corrida como
