@@ -267,17 +267,22 @@ function Vacio({ cols, children }) {
 // cliente final, y adentro del cliente cada serial con su device. Los grupos
 // de clientes arrancan abiertos; el botón los colapsa.
 function TablaDevices({ filas, q }) {
-  const [cerrados, setCerrados] = useState(() => new Set());
-  // Una busqueda nueva reabre todo y desplaza la vista hasta el primer match
+  // Todo arranca COLAPSADO; `abiertos` guarda los grupos expandidos.
+  // Una busqueda expande solo los grupos con match y scrollea al primero.
+  const [abiertos, setAbiertos] = useState(() => new Set());
   useEffect(() => {
-    setCerrados(new Set());
-    if (!q) return;
+    if (!q) { setAbiertos(new Set()); return; }
+    const conHit = new Set();
+    for (const r of filas) {
+      if (r.hit) conHit.add(`${r.end_date}|${(r.customer ?? '').trim() || '(no customer recorded)'}`);
+    }
+    setAbiertos(conHit);
     const timer = setTimeout(() => {
       document.querySelector('[data-hit="true"]')
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 120);
     return () => clearTimeout(timer);
-  }, [q]);
+  }, [q, filas]);
 
   const grupos = useMemo(() => {
     const porFecha = new Map();
@@ -299,11 +304,13 @@ function TablaDevices({ filas, q }) {
       }));
   }, [filas]);
 
-  const alternar = k => setCerrados(prev => {
+  const alternar = k => setAbiertos(prev => {
     const n = new Set(prev);
     if (n.has(k)) n.delete(k); else n.add(k);
     return n;
   });
+  const abrirTodo = () => setAbiertos(new Set(
+    grupos.flatMap(g => g.clientes.map(({ cliente }) => `${g.fecha}|${cliente}`))));
 
   if (grupos.length === 0) {
     return (
@@ -315,6 +322,16 @@ function TablaDevices({ filas, q }) {
 
   return (
     <div className="space-y-3">
+      <div className="flex justify-end gap-1">
+        <button onClick={abrirTodo}
+          className="px-2.5 py-1 rounded border border-white/[0.12] text-[10px] font-mono text-muted hover:text-white hover:border-accent/50 transition-colors">
+          Expand all
+        </button>
+        <button onClick={() => setAbiertos(new Set())}
+          className="px-2.5 py-1 rounded border border-white/[0.12] text-[10px] font-mono text-muted hover:text-white hover:border-accent/50 transition-colors">
+          Collapse all
+        </button>
+      </div>
       {(q ? grupos : grupos.slice(0, 80)).map(g => {
         const dias = diasHasta(g.fecha);
         const vencido = estadoGarantia(g.fecha) === 'expired';
@@ -336,7 +353,7 @@ function TablaDevices({ filas, q }) {
             </div>
             {g.clientes.map(({ cliente, regs }) => {
               const k = `${g.fecha}|${cliente}`;
-              const abierto = !cerrados.has(k);
+              const abierto = abiertos.has(k);
               const ventas = [...new Set(regs.map(r => r.date_of_sale))].sort();
               const planes = [...new Set(regs.map(r => `${r.plan_years}y`))];
               const resellers = [...new Set(regs.map(r => r.reseller).filter(Boolean))];
