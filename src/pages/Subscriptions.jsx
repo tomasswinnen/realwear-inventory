@@ -370,6 +370,21 @@ function Vacio({ cols, children }) {
 // Agrupado como lo lee Supply Chain: la FECHA DE FIN manda, adentro el
 // cliente final, y adentro del cliente cada serial con su device. Los grupos
 // de clientes arrancan abiertos; el botón los colapsa.
+
+// Nombre del grupo de cliente. Si no hay end customer (típico de las facturas
+// sueltas, donde NetSuite solo tiene a quién se facturó), se agrupa por lo
+// más razonable que haya: reseller, y si no, distributor. La fila avisa que
+// el end customer no está registrado.
+export function nombreGrupo(r) {
+  const c = (r.customer ?? '').trim();
+  if (c) return c;
+  const res = (r.reseller ?? '').trim();
+  if (res) return res;
+  const d = (r.distributor ?? '').trim();
+  if (d && d !== 'unknown') return d;
+  return 'end customer not recorded';
+}
+
 function TablaDevices({ filas, q }) {
   // Todo arranca COLAPSADO; `abiertos` guarda los grupos expandidos.
   // Una busqueda expande solo los grupos con match y scrollea al primero.
@@ -378,7 +393,7 @@ function TablaDevices({ filas, q }) {
     if (!q) { setAbiertos(new Set()); return; }
     const conHit = new Set();
     for (const r of filas) {
-      if (r.hit) conHit.add(`${r.end_date}|${(r.customer ?? '').trim() || 'end customer not recorded'}`);
+      if (r.hit) conHit.add(`${r.end_date}|${nombreGrupo(r)}`);
     }
     setAbiertos(conHit);
     const timer = setTimeout(() => {
@@ -393,7 +408,7 @@ function TablaDevices({ filas, q }) {
     for (const r of filas) {
       if (!porFecha.has(r.end_date)) porFecha.set(r.end_date, new Map());
       const porCliente = porFecha.get(r.end_date);
-      const k = (r.customer ?? '').trim() || 'end customer not recorded';
+      const k = nombreGrupo(r);
       if (!porCliente.has(k)) porCliente.set(k, []);
       porCliente.get(k).push(r);
     }
@@ -482,6 +497,9 @@ function TablaDevices({ filas, q }) {
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.03] transition-colors">
                     <span className={`inline-block transition-transform text-[9px] text-muted ${abierto ? 'rotate-90' : ''}`}>▶</span>
                     <span className="font-sans text-white text-xs truncate max-w-[280px]" title={cliente}>{cliente}</span>
+                    {!(regs[0].customer ?? '').trim() && cliente !== 'end customer not recorded' && (
+                      <span className="text-[10px] font-mono text-muted italic">end customer not recorded</span>
+                    )}
                     <span className="font-sans text-[10px] whitespace-nowrap truncate max-w-[360px]"
                       title={`Reseller (registered in Launchpad): ${resellers.join(', ') || '—'}\nDistributor (invoiced by RealWear, NetSuite): ${distribuidores.join(', ') || 'unknown'}${originales.length ? `\nOriginal customer: ${originales.join(', ')}` : ''}`}>
                       {fuentes.map(f => (

@@ -63,7 +63,11 @@ service plan; ver regla abajo).
   Launchpad NO tiene estas últimas: el reseller no las registra. En
   `/subscriptions` las tres se fusionan por serial (gana la fecha de fin más
   tardía; tag de fuente por grupo). Caso testigo: `MPE6R905D2655554` (Barcotec,
-  Arc 3, factura 22372, fin 2026-11-09).
+  Arc 3, factura 22372, fin 2026-11-09). Agrupación por cliente
+  (`nombreGrupo` en Subscriptions.jsx): end customer → reseller → distributor
+  → "end customer not recorded"; cuando se cae al reseller/distributor la fila
+  lo avisa en gris ("end customer not recorded") — nunca un grupo anónimo si
+  hay algo razonable para mostrar.
 - **Garantías**: en NetSuite NO viven en el serial (`inventorynumber` no tiene
   fecha ni campos custom) sino en la LÍNEA de la SO:
   `custcol_sp_end_customer` (cliente final atrás del distribuidor),
@@ -120,7 +124,11 @@ service plan; ver regla abajo).
   con los registros de Launchpad) se baja en cada corrida como
   DeviceRegistrations.xls (comando `device_reg`, tolerado) y
   subir_launchpad.py lo prefiere sobre el CSV de Retool (que queda de
-  contingencia). Campos clave: custrecord_dv_serial_number, _dv_item (device),
+  contingencia). **OJO (14/10 real): el rol de integración NO ve ese record
+  (`Record 'customrecord_dv' was not found`, HTTP 400) → hasta que un admin
+  le dé View sobre "Device Registration" al rol "Integration - Inventory
+  API", Launchpad se carga del CSV de Retool `SSP_reg.csv` (export manual,
+  ventana 30 días). El 400 tiraba todo el fetch; ahora es tolerado.** Campos clave: custrecord_dv_serial_number, _dv_item (device),
   _dv_service_pack_item (plan), _dr_service_pack_start/end_date,
   _dr_service_and_support_expire (la fecha que usa Ari/Hercules). La pagina
   suma grafico de vencimientos por mes y busqueda con contexto (expande el
