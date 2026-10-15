@@ -159,6 +159,25 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
 
+- 15/10/2026: página **Renewals & Revenue** (`/revenue`, Support). En vivo:
+  revenue facturado por año (SO Billed/Closed; SO abiertas aparte como
+  "booked, not billed yet"; Cancelled fuera), valor anual de garantías que
+  vencieron, renovación encontrada vs no renovado, suscripciones pagas de
+  Launchpad vencidas/renovadas y las que vienen, top de pérdidas, export.
+  Fuentes: so_lines + so_history (importe y estado), warranties (fechas),
+  warranty_serials + launchpad_subs (renovación). Renovado = serial con
+  cobertura posterior, o mismo end customer con plan nuevo entre -180 y +120
+  días del fin; sin seriales ni end customer = "no trace" (cuenta como no
+  renovado → el "lost" es techo). Revenue de suscripciones de device
+  (facturas sueltas) PENDIENTE: reporte_revenue.bat (carpeta del pipeline).
+  Verificado: los números coinciden con el Excel armado en paralelo en
+  Python sobre los mismos archivos (RealWear_warranties_subscriptions_revenue_
+  2024_2026.xlsx). Ojo: el 15/10 SO20195 (Peak Technologies, $979k WAR +
+  SUPP + RMA + ARIOS) estaba Partially Fulfilled → no cuenta como revenue.
+  Mismo día: SSP12 (sin guion, 2.754 u / $573k, oct-23 → oct-24) agregado al
+  pipeline (Q_WARRANTIES + PLAZO_PLAN); hasta que corra, la página estima su
+  fin = fecha de SO + 12 meses (marcado ~).
+
 - 14/10/2026: página **Overview** (`/overview`, arriba del menú) para
   presentar el sitio al equipo (viernes 16/10) en 30 segundos. Todo en vivo:
   titular antes/después, 4 números (registros de serial buscables, equipos

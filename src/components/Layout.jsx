@@ -41,6 +41,7 @@ const NAV_SECTIONS = [
     { to: '/serials',     label: 'Serial Numbers',  icon: 'hash' },
     { to: '/warranties',  label: 'Warranties',      icon: 'shield' },
     { to: '/subscriptions', label: 'Subscriptions', icon: 'refresh' },
+    { to: '/revenue',     label: 'Renewals & Revenue', icon: 'dollar' },
     { to: '/data-health', label: 'Device Data Health', icon: 'search' },
   ]},
 ];
