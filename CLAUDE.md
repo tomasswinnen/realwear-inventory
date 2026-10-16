@@ -96,6 +96,9 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   calidad de datos contra metas fijas. Sin dato = n/a (no cuenta); con menos
   de 50 puntos medibles no se pone nota. HubSpot solo puntúa si el export
   tiene < 90 días. Pagos no se puntúan (no hay datos de cobranza).
+  Accesorios = líneas de SO facturadas con SKU del catálogo `skus` que no sea
+  equipo (equipo = SKU que aparece en serial_shipments), por equipo enviado;
+  no aplica a resellers (el sell-out solo trae equipos).
 
 ## Convenciones de código
 

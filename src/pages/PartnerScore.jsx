@@ -24,7 +24,7 @@ async function fetchPartnerData() {
   const [so, ship, ws, lp, sell, stock, pipe, fuS, fuW] = await Promise.all([
     traer(() => supabase.from('so_history').select('so_number, so_date, customer, status, amount')
       .gte('so_date', sumarDias(hoy, -730))),
-    traer(() => supabase.from('serial_shipments').select('serial, cliente, fecha, doc_type')
+    traer(() => supabase.from('serial_shipments').select('serial, sku, cliente, fecha, doc_type')
       .gte('fecha', sumarDias(hoy, -365))),
     traer(() => supabase.from('warranty_serials').select('serial, customer, end_date')),
     traer(() => supabase.from('launchpad_subs').select('serial, plan_code, end_date, customer, distributor')),
@@ -35,6 +35,18 @@ async function fetchPartnerData() {
     traer(() => supabase.from('warranty_followup').select('serial, end_date, status')),
   ]);
   if (so === null) throw new Error('Could not read so_history');
+
+  // Líneas de las SO facturadas de los últimos 12 meses (para accesorios) y
+  // el catálogo de SKUs. Lotes de 100 SO (el IN va en la URL).
+  const sos = [...new Set(so.filter(r => (r.status === 'Billed' || r.status === 'Closed') && r.so_date >= sumarDias(hoy, -365))
+    .map(r => r.so_number))];
+  const lotesSO = [];
+  for (let i = 0; i < sos.length; i += 100) lotesSO.push(sos.slice(i, i + 100));
+  const [cat, ...partes] = await Promise.all([
+    traer(() => supabase.from('skus').select('sku')),
+    ...lotesSO.map(lote => traer(() => supabase.from('so_lines').select('so_number, sku, amount').in('so_number', lote))),
+  ]);
+  const lines = cat && partes.every(Boolean) ? partes.flat() : null;
 
   // Subs de Launchpad vencidas en 12 meses: a quién le vendió RealWear ese
   // equipo (serial_shipments.cliente), para saber de quién es la renovación.
@@ -54,7 +66,7 @@ async function fetchPartnerData() {
   }
 
   return {
-    so, ship: ship ?? [], ws: ws ?? [], lp: lp ?? [], sell: sell ?? [], stock: stock ?? [],
+    so, lines, catalogo: (cat ?? []).map(r => r.sku), ship: ship ?? [], ws: ws ?? [], lp: lp ?? [], sell: sell ?? [], stock: stock ?? [],
     pipe: pipe ?? [], fu: [...(fuS ?? []), ...(fuW ?? [])], duenos,
     faltan: [ship === null && 'serial_shipments', sell === null && 'sellout_devices', lp === null && 'launchpad_subs',
       ws === null && 'warranty_serials', stock === null && 'distributor_stock'].filter(Boolean),
@@ -76,9 +88,10 @@ const TIPO = {
 function meta(p, x) {
   if (p.tipo === 'rate') return `Full points at ${Math.round(p.target * 100)}%.`;
   if (p.tipo === 'peer') {
+    const f = v => (p.unidad === '$' ? `$${Math.round(v).toLocaleString('en-US')} per device` : `${Math.round(v * 100)}%`);
     return x?.meta != null
-      ? `Full points at ${Math.round(x.meta * 100)}% — the level of the top quarter of the group.`
-      : `Full points at the level of the top quarter of the group (at least ${Math.round(p.piso * 100)}%).`;
+      ? `Full points at ${f(x.meta)} — the level of the top quarter of the group.`
+      : `Full points at the level of the top quarter of the group (at least ${f(p.piso)}).`;
   }
   return '';
 }
@@ -224,7 +237,7 @@ export function PartnerScore() {
         <div>
           <h1 className="text-2xl lg:text-3xl font-semibold text-white">Partner Score</h1>
           <p className="text-sm text-muted mt-1 max-w-3xl">
-            How each distributor and reseller performs, 0–100 over the last 12 months — sales, paid plans attached,
+            How each distributor and reseller performs, 0–100 over the last 12 months — sales, accessories, paid plans attached,
             renewals and how well they report. Built only from data already on this site.
           </p>
         </div>
@@ -282,7 +295,7 @@ export function PartnerScore() {
                     <th className="px-2 py-2.5">{tab === 'cuentas' ? 'Partner' : 'Reseller'}</th>
                     <th className="px-2 py-2.5 text-center">Grade</th>
                     <th className="px-2 py-2.5">Score</th>
-                    <th className="px-2 py-2.5 hidden md:table-cell" title="Sales, paid plans attached, renewals, pipeline">Performance</th>
+                    <th className="px-2 py-2.5 hidden md:table-cell" title="Sales, accessories, paid plans attached, renewals, pipeline">Performance</th>
                     <th className="px-2 py-2.5 hidden md:table-cell" title="Sell-out, end customer, serial accuracy, stock report">Data quality</th>
                     <th className="px-2 py-2.5 hidden lg:table-cell text-right">{tab === 'cuentas' ? 'Billed 12 mo' : 'Devices 12 mo'}</th>
                     <th className="px-4 py-2.5 hidden lg:table-cell">Weakest</th>

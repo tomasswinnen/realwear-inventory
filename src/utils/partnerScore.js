@@ -45,10 +45,12 @@ const PAGA = r => r.plan_code !== 'SSP-STANDARD'; // SSP-STANDARD = garantía es
 //   (con un piso). Para attach, registro y renovaciones: hoy son bajos en todo
 //   el canal, y una meta fija dejaría a todos en cero sin distinguir a nadie.
 export const PARAMS_CUENTA = [
-  { k: 'volume', label: 'Billed sales', max: 25, tipo: 'rank', grupo: 'perf',
+  { k: 'volume', label: 'Billed sales', max: 20, tipo: 'rank', grupo: 'perf',
     como: 'Billed sales orders in NetSuite, last 12 months. Ranked against the other accounts of the same type.' },
   { k: 'growth', label: 'Growth', max: 5, tipo: 'growth', grupo: 'perf',
     como: 'Billed last 12 months vs the 12 months before. −50% or worse = 0, flat = 2.5, +50% or better = 5.' },
+  { k: 'accessories', label: 'Accessories', max: 10, tipo: 'peer', piso: 25, unidad: '$', grupo: 'perf',
+    como: 'Accessory sales (billed SO lines of catalog SKUs that are not devices) per device shipped, last 12 months. Needs 5+ devices shipped.' },
   { k: 'coverage', label: 'Sell-out coverage', max: 10, tipo: 'rate', target: 0.8, grupo: 'data', soloDist: true,
     como: 'Devices we shipped them 30–365 days ago that appear in a sell-out report. Devices still in their stock lower it.' },
   { k: 'endcust', label: 'End customer reported', max: 5, tipo: 'rate', target: 0.8, grupo: 'data', soloDist: true,
@@ -61,8 +63,8 @@ export const PARAMS_CUENTA = [
     como: 'Devices shipped 30–365 days ago that the customer registered in Launchpad.' },
   { k: 'renewals', label: 'Renewals', max: 15, tipo: 'peer', piso: 0.2, grupo: 'perf', min: 5,
     como: 'Paid coverage that ended in the last 12 months and was renewed (a later plan on the same serial, or marked Renewed in follow-up). Needs 5+ ended contracts.' },
-  { k: 'stock', label: 'Stock report', max: 10, tipo: 'stock', grupo: 'data', soloDist: true,
-    como: 'Latest stock report: within 45 days = 10, within 100 days = 5, older or none = 0.' },
+  { k: 'stock', label: 'Stock report', max: 5, tipo: 'stock', grupo: 'data', soloDist: true,
+    como: 'Latest stock report: within 45 days = 5, within 100 days = 2.5, older or none = 0.' },
   { k: 'pipeline', label: 'HubSpot pipeline', max: 5, tipo: 'rank', grupo: 'perf',
     como: 'Won + weighted open deals in HubSpot. Ranked. Only scored when the HubSpot export is less than 90 days old.' },
 ];
@@ -186,7 +188,7 @@ export function calcularPuntajes(data, hoy) {
   const cuenta = (id, base) => {
     if (!cuentas.has(id)) {
       cuentas.set(id, {
-        id, ...base, nsNombres: new Set(), billed: 0, prev: 0, ordenes: 0,
+        id, ...base, nsNombres: new Set(), billed: 0, prev: 0, ordenes: 0, acc: 0,
         enviados: new Set(), enviados12: 0, sellRows: [], stockAt: null, pipe: 0, pipeDeals: 0,
         vencidos: 0, renovados: 0,
       });
@@ -204,13 +206,26 @@ export function calcularPuntajes(data, hoy) {
   };
 
   // 1. Ventas facturadas (SO Billed/Closed)
+  const soCuenta = new Map(); // SO de los últimos 12 meses → cuenta
   for (const r of data.so ?? []) {
     if (r.status !== 'Billed' && r.status !== 'Closed') continue;
     const f = r.so_date ?? '';
     if (f < d730 || f > hoy) continue;
     const c = deNS(r.customer);
     if (!c) continue;
-    if (f >= d365) { c.billed += Number(r.amount) || 0; c.ordenes += 1; } else c.prev += Number(r.amount) || 0;
+    if (f >= d365) { c.billed += Number(r.amount) || 0; c.ordenes += 1; soCuenta.set(r.so_number, c); } else c.prev += Number(r.amount) || 0;
+  }
+
+  // 1b. Accesorios: líneas de esas SO con SKU del catálogo que no sea equipo.
+  // Equipo = SKU que aparece en serial_shipments (+ los 4 conocidos). Las
+  // líneas de grupo ("End of Group", "520 Direct"…) no están en el catálogo.
+  const equipos = new Set(['127031*', '127033*', '127128*', '127165*']);
+  for (const e of data.ship ?? []) if (e.sku) equipos.add(e.sku);
+  const catalogo = new Set(data.catalogo ?? []);
+  for (const l of data.lines ?? []) {
+    const c = soCuenta.get(l.so_number);
+    if (!c || !catalogo.has(l.sku) || equipos.has(l.sku)) continue;
+    c.acc += Number(l.amount) || 0;
   }
 
   // 2. Equipos enviados (un evento por serial: el más viejo dentro de la ventana)
@@ -336,6 +351,11 @@ export function calcularPuntajes(data, hoy) {
       };
       c.p.attach = tEnv(P.attach, env.filter(s => pagas.has(s)).length);
       c.p.registration = tEnv(P.registration, env.filter(s => enLP.has(s)).length);
+      c.p.accessories = !data.lines
+        ? { na: true, valor: 'sales order lines not available' }
+        : c.enviados12 < minEnv
+          ? { na: true, valor: `$${fmtN(Math.round(c.acc))} in accessories — too few devices shipped to compare` }
+          : { r: c.acc / c.enviados12, pts: null, valor: `$${fmtN(Math.round(c.acc))} in accessories · $${fmtN(Math.round(c.acc / c.enviados12))} per device shipped (${fmtN(c.enviados12)} devices)` };
       c.p.renewals = tasa(P.renewals, c.renovados, c.vencidos, (a, b) => `${fmtN(a)} of ${fmtN(b)} ended contracts renewed (${pct(a, b)}%)`);
       if (!c.vencidos) c.p.renewals = { na: true, valor: 'no paid coverage ended in the last 12 months' };
       c.p.pipeline = pipeFresco
@@ -363,7 +383,7 @@ export function calcularPuntajes(data, hoy) {
         if (!c.stockAt) c.p.stock = { pts: 0, valor: 'no stock report' };
         else {
           const dd = dias(c.stockAt, hoy);
-          c.p.stock = { pts: dd <= 45 ? 10 : dd <= 100 ? 5 : 0, valor: `last report ${c.stockAt} (${dd} days ago)` };
+          c.p.stock = { pts: dd <= 45 ? 5 : dd <= 100 ? 2.5 : 0, valor: `last report ${c.stockAt} (${dd} days ago)` };
         }
       }
     }
