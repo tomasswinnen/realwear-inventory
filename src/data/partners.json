@@ -1,0 +1,27 @@
+{
+  "_readme": "Distributors for /partner-score. Each one lists how its name is spelled in each source. netsuite = billed-to account name in NetSuite without the customer number. sellout = 'distributor' in the Channel Ops sell-out Excel (a trailing * matches any suffix, e.g. 'ALSO - *'). stock = name in the Inventory Q* stock file. A NetSuite customer that is not listed here and bills >= $50k in 12 months shows up as a 'Direct account'.",
+  "distributors": [
+    { "name": "Westbase B.V.", "region": "NL", "netsuite": ["Westbase B.V."], "sellout": ["Westbase B.V."], "stock": ["Westbase (WBV)"] },
+    { "name": "Westbase UK", "region": "UK", "netsuite": ["Westbase Technology Ltd. (UK)"], "sellout": ["Westbase UK"], "stock": ["Westbase (WBT)"] },
+    { "name": "ScanSource", "region": "US", "netsuite": ["ScanSource, Inc."], "sellout": ["ScanSource, Inc."], "stock": ["ScanSource, Inc."] },
+    { "name": "ALSO", "region": "EU", "netsuite": ["Also Deutschland GmbH", "ALSO Finland OY"], "sellout": ["ALSO - *"], "stock": ["Also (*"] },
+    { "name": "Sysgration", "region": "TW", "netsuite": ["Sysgration Ltd. - Taiwan"], "sellout": ["Sysgration - Taiwan"], "stock": [] },
+    { "name": "ATG", "region": "KR", "netsuite": ["ATG Co., Ltd."], "sellout": ["ATG - Korea"], "stock": [] },
+    { "name": "Barcotec", "region": "DE", "netsuite": ["Barcotec GmbH"], "sellout": ["Barcotec"], "stock": [] },
+    { "name": "OnVirtu", "region": "US", "netsuite": ["OnVirtu LLC"], "sellout": ["OnVirtu"], "stock": ["Onvirtu"] },
+    { "name": "Amplicon", "region": "ME", "netsuite": ["Amplicon Middle East"], "sellout": ["Amplicon"], "stock": [] },
+    { "name": "Anand IT Infotech", "region": "IN", "netsuite": ["Anand IT Infotech India Pvt. Ltd."], "sellout": ["Anandit Infotech India"], "stock": ["Anadit"] },
+    { "name": "Elmark", "region": "PL", "netsuite": ["Elmark Automatyka SA"], "sellout": ["Elmark Automatyka"], "stock": ["Elmark"] },
+    { "name": "Nippon Sokki", "region": "JP", "netsuite": ["Nippon Sokki"], "sellout": ["Nippon Sokki"], "stock": ["Nippon Sokki"] },
+    { "name": "NSW (Nippon Systemware)", "region": "JP", "netsuite": ["NSW Inc."], "sellout": ["NIPPON SYSTEMWARE CO.LTD. (NSW)"], "stock": [] },
+    { "name": "CommsPlus", "region": "AU", "netsuite": ["CommsPlus Distribution Pty Ltd"], "sellout": ["CommsPlus"], "stock": ["Commsplus"] },
+    { "name": "XR Works", "region": "ZA", "netsuite": ["XR Works (Pty) Ltd"], "sellout": ["XR Works"], "stock": [] },
+    { "name": "Alloys", "region": "AU", "netsuite": ["ALLOYS INTERNATIONAL PRINTER AND HARDWARE DIVISION PTY LTD"], "sellout": ["Alloys"], "stock": [] },
+    { "name": "MGI Tech", "region": "", "netsuite": ["MGI TECH"], "sellout": ["MGI TECH"], "stock": [] },
+    { "name": "Ingram Micro (US)", "region": "US", "netsuite": ["Ingram Micro", "Ingram Micro US"], "sellout": [], "stock": [] },
+    { "name": "Ingram Micro (Canada)", "region": "CA", "netsuite": ["Ingram Micro LP Canada"], "sellout": ["Ingram Micro - Canada"], "stock": [] },
+    { "name": "Ingram Micro (India)", "region": "IN", "netsuite": ["Ingram Micro India"], "sellout": ["Ingram Micro - India"], "stock": [] },
+    { "name": "AcuraFlow", "region": "LATAM", "netsuite": ["AcuraFlow SPA", "Acuraflow SA de CV", "ACURAFLOW INC. U.S"], "sellout": ["AcuraFlow"], "stock": [] },
+    { "name": "i.safe MOBILE", "region": "", "netsuite": ["i.Safe Mobile GmbH", "i.safe Mobile Singapore Pte Ltd", "i.safe MOBILE Australia Pty. Ltd."], "sellout": ["i.Safe Mobile GmbH"], "stock": [] }
+  ]
+}

@@ -152,6 +152,11 @@ const PATHS = {
       <path d="M9 12l2.2 2.2L15.2 10" />
     </>
   ),
+  star: (
+    <>
+      <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5z" />
+    </>
+  ),
 };
 
 export function Icon({ name, className = 'w-5 h-5', strokeWidth = 1.8 }) {

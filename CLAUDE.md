@@ -85,6 +85,18 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   `end_customer`, carga manual en NetSuite y falta en ~4 de cada 5 líneas de
   2026. Ver `WARRANTIES.md` en la carpeta del pipeline.
 
+- **Partner Score** (`/partner-score`, Sales): puntaje 0–100 por distribuidor,
+  cuenta directa (cliente NetSuite con ≥ $50k facturados en 12 meses que no
+  está en la lista) y reseller (solo los del sell-out, ≥5 equipos). Lógica en
+  `src/utils/partnerScore.js`; **la lista de distribuidores y cómo se escribe
+  cada uno en NetSuite / sell-out / stock vive en `src/data/partners.json`**
+  (si aparece un nombre nuevo en sell-out o stock, la página lo avisa en
+  "Names not linked"). Ventas = SO Billed/Closed. Attach/registro/renovación
+  se miden contra el cuartil superior del grupo (son bajos en todo el canal);
+  calidad de datos contra metas fijas. Sin dato = n/a (no cuenta); con menos
+  de 50 puntos medibles no se pone nota. HubSpot solo puntúa si el export
+  tiene < 90 días. Pagos no se puntúan (no hay datos de cobranza).
+
 ## Convenciones de código
 
 - Dark theme: fondos `#0f1923` (body) / `#0d1620` (paneles), bordes
@@ -98,7 +110,7 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   TransferOrders, OnOrder, DistributorStock, SalesPipeline,
   DistributorScorecard, Backlog (`/backlog?so=`), LeadTimes, Margins, Trends,
   Serials (`/serials?q=`), Warranties, SoHistory, Pepsi, Payments, Login,
-  UpdatePassword.
+  UpdatePassword, PartnerScore (`/partner-score`).
 - Mensajes de commit en español, al grano (mirar `git log`).
 
 ## Reglas de trabajo con Claude
