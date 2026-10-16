@@ -62,7 +62,7 @@ export const PARAMS_CUENTA = [
   { k: 'registration', label: 'Registered in Launchpad', max: 5, tipo: 'peer', piso: 0.1, grupo: 'perf',
     como: 'Devices shipped 30–365 days ago that the customer registered in Launchpad.' },
   { k: 'renewals', label: 'Renewals', max: 15, tipo: 'peer', piso: 0.2, grupo: 'perf', min: 5,
-    como: 'Paid coverage that ended in the last 12 months and was renewed (a later plan on the same serial, or marked Renewed in follow-up). Needs 5+ ended contracts.' },
+    como: 'Paid coverage that ended in the last 12 months and was renewed (a later plan on the same serial ending 60+ days after, or marked Renewed in follow-up). Needs 5+ ended contracts.' },
   { k: 'stock', label: 'Stock report', max: 5, tipo: 'stock', grupo: 'data', soloDist: true,
     como: 'Latest stock report: within 45 days = 5, within 100 days = 2.5, older or none = 0.' },
   { k: 'pipeline', label: 'HubSpot pipeline', max: 5, tipo: 'rank', grupo: 'perf',
@@ -257,7 +257,11 @@ export function calcularPuntajes(data, hoy) {
   }
   const fuRenov = new Set((data.fu ?? []).filter(f => f.status === 'renewed')
     .map(f => `${normSerial(f.serial)}|${f.end_date}`));
-  const renovado = (s, fin) => fuRenov.has(`${s}|${fin}`) || (pagas.get(s) ?? []).some(x => x > fin);
+  // Renovado = otra cobertura paga que termina 60+ días después. Con "cualquier
+  // fecha posterior" el mismo contrato cargado en NetSuite y en Launchpad con
+  // fechas apenas distintas contaba como renovación (7 de 15 casos al 16/10).
+  const renovado = (s, fin) => fuRenov.has(`${s}|${fin}`)
+    || (pagas.get(s) ?? []).some(x => x > sumarDias(fin, 60));
 
   // Contratos pagos vencidos en los últimos 12 meses → cuenta que los vendió
   const vistos = new Set();
