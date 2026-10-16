@@ -17,7 +17,7 @@ function sumarMes(ym, n) {
   return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`;
 }
 
-export function ExpiryChart({ filas, titulo }) {
+export function ExpiryChart({ filas, titulo, grande = false }) {
   const datos = useMemo(() => {
     const hoy = HOY();
     const mesHoy = hoy.slice(0, 7);
@@ -55,12 +55,13 @@ export function ExpiryChart({ filas, titulo }) {
 
   if (!datos) return null;
   const { barras, max, total, enVentana } = datos;
-  const H = 150;
+  const H = grande ? 230 : 150;
+  const tx = grande ? 'text-sm' : 'text-[10px]';
   return (
     <div className="bg-card rounded-lg border border-white/[0.08] p-4">
       <div className="flex items-baseline gap-3 flex-wrap mb-3">
-        <p className="text-[10px] text-muted font-mono uppercase tracking-widest">{titulo} · upcoming</p>
-        <span className="text-[10px] font-mono text-muted">
+        <p className={`${tx} text-muted font-mono uppercase tracking-widest`}>{titulo} · upcoming</p>
+        <span className={`${tx} font-mono text-muted`}>
           <span className="inline-block w-2 h-2 rounded-sm bg-[#f59e0b] mr-1 align-middle" />
           renewal window ≤{DIAS_POR_VENCER}d · <span className="text-warning">{enVentana.toLocaleString()}</span>
           <span className="inline-block w-2 h-2 rounded-sm bg-[#38bdf8] ml-3 mr-1 align-middle" />
@@ -78,7 +79,7 @@ export function ExpiryChart({ filas, titulo }) {
           return (
             <div key={b.m} className="flex-1 min-w-0 flex flex-col items-center justify-end h-full"
               title={b.later ? `${b.v} end more than ${HORIZONTE} months from now` : `${MES[Number(mm) - 1]} ${y}: ${b.v} ${b.v === 1 ? 'ends' : 'end'}`}>
-              <span className={`text-[9px] sm:text-[10px] font-mono mb-0.5 ${b.v ? (b.ventana ? 'text-warning' : 'text-slate-300') : 'text-transparent'}`}>
+              <span className={`${grande ? 'text-sm' : 'text-[9px] sm:text-[10px]'} font-mono mb-0.5 ${b.v ? (b.ventana ? 'text-warning' : 'text-slate-300') : 'text-transparent'}`}>
                 {b.v || '0'}
               </span>
               <div className="w-full rounded-t"
@@ -88,9 +89,9 @@ export function ExpiryChart({ filas, titulo }) {
                     : b.ventana ? '#f59e0b' : '#38bdf8',
                   opacity: 0.9,
                 }} />
-              <span className={`mt-1 text-[9px] sm:text-[10px] font-mono leading-tight text-center ${rotuloMovil ? '' : 'invisible sm:visible'} ${enero ? 'text-slate-300' : 'text-muted'}`}>
+              <span className={`mt-1 ${grande ? 'text-sm' : 'text-[9px] sm:text-[10px]'} font-mono leading-tight text-center ${rotuloMovil ? '' : 'invisible sm:visible'} ${enero ? 'text-slate-300' : 'text-muted'}`}>
                 {etiqueta}
-                <span className="block text-[9px] opacity-70">{(enero || b === barras[0]) && !b.later ? y : '\u00a0'}</span>
+                <span className={`block ${grande ? 'text-xs' : 'text-[9px]'} opacity-70`}>{(enero || b === barras[0]) && !b.later ? y : '\u00a0'}</span>
               </span>
             </div>
           );

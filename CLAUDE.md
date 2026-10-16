@@ -159,6 +159,12 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
 
+- 16/10/2026: **Overview** ampliada para la presentación: tipografía más
+  grande (pantalla/proyector), 4º número = valor de garantías perdido por año,
+  sección "The money" (facturado, perdido por año en barras, suscripciones
+  renovadas y la ola de 2028) que reusa `fetchRevenue`/`calcular` exportados
+  de Revenue.jsx (no duplicar la lógica). ExpiryChart acepta `grande`.
+
 - 15/10/2026: página **Renewals & Revenue** (`/revenue`, Support). En vivo:
   revenue facturado por año (SO Billed/Closed; SO abiertas aparte como
   "booked, not billed yet"; Cancelled fuera), valor anual de garantías que

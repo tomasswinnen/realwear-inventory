@@ -37,7 +37,7 @@ const RE_WAR = /^(SSP|SP-ADV|WAR-STD|SUPP-STD|RMA-POOL)/i;
 const RE_SW = /DEV-PRO|ARIOS|Cloud|Analytics|License|^RWPS/i;
 const FACTURADO = new Set(['Billed', 'Closed']);
 
-async function fetchRevenue() {
+export async function fetchRevenue() {
   const lineas = await paginar(() => supabase.from('so_lines').select('so_number, sku, qty, amount')
     .or('sku.ilike.SSP*,sku.ilike.SP-ADV*,sku.ilike.WAR-STD*,sku.ilike.SUPP-STD*,sku.ilike.RMA-POOL*,sku.ilike.DEV-PRO*,sku.ilike.ARIOS*,sku.ilike.*Cloud*,sku.ilike.*Analytics*,sku.ilike.*License*,sku.ilike.RWPS*'));
   const sos = [...new Set(lineas.map(l => l.so_number))];
@@ -72,7 +72,7 @@ const masAnios = (iso, n) => {
   return `${y + n}-${String(m).padStart(2, '0')}-${String(m === 2 && d === 29 ? 28 : d).padStart(2, '0')}`;
 };
 
-function calcular(data) {
+export function calcular(data) {
   const hoy = HOY();
   const anioHoy = Number(hoy.slice(0, 4));
   const anios = [];

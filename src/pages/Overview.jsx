@@ -6,6 +6,7 @@ import { QueryError } from '../components/QueryError';
 import { KPISkeleton } from '../components/Skeleton';
 import { ExpiryChart } from '../components/ExpiryChart';
 import { HOY, DIAS_POR_VENCER, diasHasta, nombreCuenta } from '../utils/warranty';
+import { fetchRevenue, calcular as calcularRevenue } from './Revenue';
 
 // Overview = la pantalla para PRESENTAR el sitio (viernes 16/10/2026): en 30
 // segundos, qué une, qué permite hacer y qué encontró. Todo en vivo desde
@@ -31,7 +32,12 @@ async function fetchOverview() {
     supabase.from('pipeline_runs').select('finished_at').eq('ok', true)
       .order('finished_at', { ascending: false }).limit(1),
   ]);
+  // Plata: misma lógica que la página Renewals & Revenue (no se duplica).
+  // Si falla, la sección de plata no se muestra y el resto sigue.
+  let revenue = null;
+  try { revenue = calcularRevenue(await fetchRevenue()); } catch { revenue = null; }
   return {
+    revenue,
     ws: ws ?? [], lp: lp ?? [], inv: inv ?? [], sell: sell ?? [],
     fu: [...(subFu ?? []), ...(warFu ?? [])], nShip,
     ultimaCorrida: runs?.data?.[0]?.finished_at ?? null,
@@ -42,6 +48,13 @@ const norm = s => (s ?? '').trim().toUpperCase();
 const mismo = (a, b) => (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
 const fmt = n => (n == null ? '—' : n.toLocaleString('en-US'));
 const pct = (n, d) => (d ? `${Math.round((100 * n) / d)}%` : '—');
+const kmoney = n => {
+  if (n == null) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `$${Math.round(n / 1e3).toLocaleString('en-US')}k`;
+  return `$${Math.round(n)}`;
+};
 
 export function Overview() {
   const { data, loading, error, refetch } = useQuery(fetchOverview, []);
@@ -122,18 +135,18 @@ export function Overview() {
   const corrida = data?.ultimaCorrida ? new Date(data.ultimaCorrida) : null;
 
   return (
-    <div className="space-y-6 max-w-[1400px]">
+    <div className="space-y-8 max-w-[1700px]">
       {/* 1 · Titular */}
       <div>
-        <div className="flex items-center gap-2 text-[11px] font-mono text-muted">
-          <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+        <div className="flex items-center gap-2 text-sm font-mono text-muted">
+          <span className="w-2.5 h-2.5 rounded-full bg-success animate-pulse" />
           live data{corrida && <> · last refresh {corrida.toLocaleDateString([], { month: 'short', day: 'numeric' })} {corrida.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</>}
           {' '}· refreshed every 2 hours · every run checked automatically
         </div>
-        <h1 className="mt-2 text-2xl lg:text-4xl font-sans font-semibold text-white leading-tight">
+        <h1 className="mt-2 text-4xl lg:text-5xl font-sans font-semibold text-white leading-tight">
           Every RealWear device — from NetSuite to the end customer.
         </h1>
-        <p className="mt-2 text-sm lg:text-base text-slate-300 max-w-4xl">
+        <p className="mt-2 text-lg lg:text-xl text-slate-300 max-w-4xl">
           <span className="text-muted">Before:</span> four systems and an Excel sent by email — nobody could say who has a device or when its coverage ends.{' '}
           <span className="text-muted">Now:</span> one place, by serial number, with who to call and when.
         </p>
@@ -142,24 +155,24 @@ export function Overview() {
       {/* 2 · Cuatro números */}
       {loading || !v ? <KPISkeleton /> : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Hero valor={fmt(data.nShip)} titulo="serial records searchable"
-            sub="every shipment and invoice since 2015, by serial number" />
           <Hero valor={fmt(v.vivos)} titulo="devices with live coverage"
             sub={`${fmt(v.subs)} paid subscriptions · ${pct(v.subsConNombre, v.subs)} with a named end customer`} />
           <Hero valor={fmt(v.porRenovar)} titulo={`renewals in the next ${DIAS_POR_VENCER} days`} color="text-warning"
             sub={`${fmt(v.conSeguimiento)} already being followed up · ready to export to HubSpot`} />
           <Hero valor={fmt(v.recuperados)} titulo="end customers recovered" color="text-success"
             sub="known only from distributor reports — now attached to their serials" />
+          <Hero valor={data.revenue ? `${kmoney(data.revenue.totales.perdido)}` : '—'} titulo="warranty value lost per year" color="text-danger"
+            sub={data.revenue ? `expired since ${data.revenue.anios[0]} with no renewal — renewal found on ${data.revenue.totales.anual ? ((100 * data.revenue.totales.renovado) / data.revenue.totales.anual).toFixed(1) : '0'}%` : 'loading…'} />
         </div>
       )}
 
-      {/* 3 · Cómo funciona */}
-      <Flujo v={v} nShip={data?.nShip} />
+      {/* 2b · La plata */}
+      {data?.revenue && <Plata r={data.revenue} />}
 
       {/* 4 · Lo que encontró */}
       {v && (
         <section>
-          <h2 className="text-[11px] font-mono text-muted uppercase tracking-widest mb-2">What it found — that nobody could see before</h2>
+          <h2 className="text-sm font-mono text-muted uppercase tracking-widest mb-2">What it found — that nobody could see before</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             <Hallazgo n={fmt(v.quemando)} tono="text-warning" a="/data-health"
               titulo="subscriptions running with no customer"
@@ -177,8 +190,11 @@ export function Overview() {
         </section>
       )}
 
-      {/* 5 · Próximos vencimientos */}
-      {v && <ExpiryChart filas={v.filasChart} titulo="Coverage ending by month (warranties + subscriptions)" />}
+      {/* 5 · Cómo funciona */}
+      <Flujo v={v} nShip={data?.nShip} />
+
+      {/* 6 · Próximos vencimientos */}
+      {v && <ExpiryChart grande filas={v.filasChart} titulo="Coverage ending by month (warranties + subscriptions)" />}
 
       {/* 6 · Probalo */}
       <Buscador />
@@ -186,22 +202,73 @@ export function Overview() {
   );
 }
 
+// La plata, año por año: lo que se facturó y lo que venció sin renovarse.
+function Plata({ r }) {
+  const ultimo = r.anios[r.anios.length - 1];
+  const max = Math.max(1, ...r.porAnio.map(a => a.anual));
+  return (
+    <section className="bg-card border border-white/[0.08] rounded-lg p-5 lg:p-7">
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <h2 className="text-sm font-mono text-muted uppercase tracking-widest">The money — warranties are almost never renewed</h2>
+        <Link to="/revenue" className="text-sm font-mono text-accent hover:text-accent/80">details →</Link>
+      </div>
+      <div className="mt-3 grid grid-cols-1 lg:grid-cols-[1fr_1.4fr] gap-5">
+        <div className="space-y-3">
+          <div>
+            <p className="text-5xl font-num text-white">{kmoney(r.totales.revWar + r.totales.revSw)}</p>
+            <p className="text-base text-muted font-sans">billed since {r.anios[0]} · {kmoney(r.totales.revWar)} warranties · {kmoney(r.totales.revSw)} software
+              {r.totales.abierto > 0 && <> · <span className="text-slate-300">{kmoney(r.totales.abierto)} more booked, not billed yet</span></>}</p>
+          </div>
+          <div>
+            <p className="text-5xl font-num text-danger">{kmoney(r.totales.perdido)}</p>
+            <p className="text-base text-muted font-sans">a year in warranty coverage that expired with no renewal — {r.totales.unidades.toLocaleString('en-US')} units. Nobody calls the customer when a plan ends; the renewal tracker fixes that.</p>
+          </div>
+          <div>
+            <p className="text-5xl font-num text-white">{r.totales.subsFin ? `${r.totales.subsRen} of ${r.totales.subsFin}` : '—'}</p>
+            <p className="text-base text-muted font-sans">paid device subscriptions renewed so far — the big wave is ahead: {Object.entries(r.subsFuturo).sort().map(([y, n]) => `${n.toLocaleString('en-US')} in ${y === ultimo ? `rest of ${y}` : y}`).join(' · ')}</p>
+          </div>
+        </div>
+        <div>
+          <p className="text-[13px] font-mono text-muted uppercase tracking-wider mb-2">Warranty value that expired each year (annual) — and how much was renewed</p>
+          <div className="space-y-2.5">
+            {r.porAnio.map(a => (
+              <div key={a.y}>
+                <div className="flex items-baseline justify-between text-base font-mono">
+                  <span className="text-slate-300">{a.y === ultimo ? `${a.y} so far` : a.y}</span>
+                  <span><span className="text-danger">{kmoney(a.perdido)} lost</span><span className="text-muted"> · {kmoney(a.renovado)} renewed</span></span>
+                </div>
+                <div className="mt-1 h-5 rounded bg-white/[0.04] overflow-hidden flex">
+                  <div className="h-full bg-[#ef4444]/80" style={{ width: `${(100 * a.perdido) / max}%` }} title={`${a.y}: ${kmoney(a.perdido)} not renewed`} />
+                  <div className="h-full bg-[#22c55e]" style={{ width: `${(100 * a.renovado) / max}%`, minWidth: a.renovado ? 2 : 0 }} title={`${a.y}: ${kmoney(a.renovado)} renewed`} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[13px] font-mono text-muted leading-relaxed">
+            Billed = sales orders Billed/Closed. Renewal = the device got new coverage, or the same end customer bought a new plan around the end date; renewals sold through a distributor with no serials or end customer can’t be linked, so “lost” is an upper bound. Device-subscription invoices not included yet.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Hero({ valor, titulo, sub, color = 'text-accent' }) {
   return (
-    <div className="bg-card border border-white/[0.08] rounded-lg p-4 lg:p-5 min-w-0">
-      <p className={`text-3xl lg:text-5xl font-num font-medium leading-none ${color}`}>{valor}</p>
-      <p className="mt-2 text-sm lg:text-base text-white font-sans">{titulo}</p>
-      <p className="mt-1 text-[11px] lg:text-xs text-muted font-sans">{sub}</p>
+    <div className="bg-card border border-white/[0.08] rounded-lg p-5 lg:p-7 min-w-0">
+      <p className={`text-5xl lg:text-7xl font-num font-medium leading-none ${color}`}>{valor}</p>
+      <p className="mt-2 text-lg lg:text-xl text-white font-sans">{titulo}</p>
+      <p className="mt-1 text-sm lg:text-base text-muted font-sans">{sub}</p>
     </div>
   );
 }
 
 function Hallazgo({ n, titulo, texto, tono, a }) {
   return (
-    <Link to={a} className="block bg-card border border-white/[0.08] rounded-lg p-4 hover:border-accent/40 transition-colors">
-      <p className={`text-3xl font-num font-medium leading-none ${tono}`}>{n}</p>
-      <p className="mt-2 text-sm text-white font-sans leading-snug">{titulo}</p>
-      <p className="mt-1.5 text-[11px] text-muted font-sans leading-snug">{texto}</p>
+    <Link to={a} className="block bg-card border border-white/[0.08] rounded-lg p-6 hover:border-accent/40 transition-colors">
+      <p className={`text-5xl font-num font-medium leading-none ${tono}`}>{n}</p>
+      <p className="mt-2 text-lg text-white font-sans leading-snug">{titulo}</p>
+      <p className="mt-1.5 text-sm text-muted font-sans leading-snug">{texto}</p>
     </Link>
   );
 }
@@ -221,24 +288,24 @@ function Flujo({ v, nShip }) {
     { n: 'See the data gaps', d: 'by distributor, serial by serial', a: '/data-health' },
   ];
   const Flecha = () => (
-    <div className="flex items-center justify-center text-muted text-2xl px-1 lg:rotate-0 rotate-90 select-none" aria-hidden>→</div>
+    <div className="flex items-center justify-center text-muted text-4xl px-1 lg:rotate-0 rotate-90 select-none" aria-hidden>→</div>
   );
   return (
     <section>
-      <h2 className="text-[11px] font-mono text-muted uppercase tracking-widest mb-2">How it works</h2>
+      <h2 className="text-sm font-mono text-muted uppercase tracking-widest mb-2">How it works</h2>
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto_1fr] gap-2 items-stretch">
         <div className="space-y-2">
           {fuentes.map(f => (
-            <div key={f.n} className="bg-card border border-white/[0.08] rounded-lg px-4 py-2.5">
-              <p className="text-sm text-white font-sans">{f.n}</p>
-              <p className="text-[11px] text-muted font-sans">{f.d}{f.x && <span className="text-slate-300"> · {f.x}</span>}</p>
+            <div key={f.n} className="bg-card border border-white/[0.08] rounded-lg px-5 py-3.5">
+              <p className="text-lg text-white font-sans">{f.n}</p>
+              <p className="text-sm text-muted font-sans">{f.d}{f.x && <span className="text-slate-300"> · {f.x}</span>}</p>
             </div>
           ))}
         </div>
         <Flecha />
         <div className="bg-accent/10 border border-accent/40 rounded-lg px-5 py-4 flex flex-col justify-center">
-          <p className="text-lg text-white font-sans font-semibold">RealWear Inventory</p>
-          <p className="mt-1 text-xs text-slate-300 font-sans leading-relaxed">
+          <p className="text-2xl text-white font-sans font-semibold">RealWear Inventory</p>
+          <p className="mt-1 text-base text-slate-300 font-sans leading-relaxed">
             Merged by serial number · refreshed every 2 hours · each run checked against its source,
             with an alarm if anything doesn’t add up.
           </p>
@@ -246,9 +313,9 @@ function Flujo({ v, nShip }) {
         <Flecha />
         <div className="space-y-2">
           {salidas.map(s => (
-            <Link key={s.n} to={s.a} className="block bg-card border border-white/[0.08] rounded-lg px-4 py-2 hover:border-accent/40 transition-colors">
-              <p className="text-sm text-white font-sans">{s.n}</p>
-              <p className="text-[11px] text-muted font-sans">{s.d}</p>
+            <Link key={s.n} to={s.a} className="block bg-card border border-white/[0.08] rounded-lg px-5 py-3 hover:border-accent/40 transition-colors">
+              <p className="text-lg text-white font-sans">{s.n}</p>
+              <p className="text-sm text-muted font-sans">{s.d}</p>
             </Link>
           ))}
         </div>
@@ -293,7 +360,7 @@ function Buscador() {
     const dias = cob ? diasHasta(cob.fin) : null;
     const nada = !envio && !cob && !so;
     tarjeta = nada ? (
-      <p className="text-sm text-muted font-mono">No trace of {res.q} in NetSuite, Launchpad or the sell-out reports.</p>
+      <p className="text-lg text-muted font-mono">No trace of {res.q} in NetSuite, Launchpad or the sell-out reports.</p>
     ) : (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Dato t="Shipped" v={envio ? nombreCuenta(envio.cliente) : '—'}
@@ -309,17 +376,17 @@ function Buscador() {
   }
 
   return (
-    <section className="bg-card border border-accent/30 rounded-lg p-4 lg:p-5">
-      <h2 className="text-[11px] font-mono text-muted uppercase tracking-widest mb-2">Try it — type any serial number</h2>
+    <section className="bg-card border border-accent/30 rounded-lg p-5 lg:p-7">
+      <h2 className="text-sm font-mono text-muted uppercase tracking-widest mb-2">Try it — type any serial number</h2>
       <form onSubmit={buscar} className="flex gap-2 flex-wrap">
         <input value={txt} onChange={e => setTxt(e.target.value)} placeholder="e.g. MPA6P804D2721020"
-          className="bg-[#0d1620] border border-white/[0.15] rounded px-4 py-3 text-lg font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/60 w-full sm:w-[420px]" />
+          className="bg-[#0d1620] border border-white/[0.15] rounded px-5 py-4 text-2xl font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/60 w-full sm:w-[420px]" />
         <button type="submit" disabled={buscando}
-          className="px-5 py-3 rounded bg-accent text-white text-sm font-mono hover:bg-accent/80 disabled:opacity-50 transition-colors">
+          className="px-5 py-3 rounded bg-accent text-white text-lg font-mono hover:bg-accent/80 disabled:opacity-50 transition-colors">
           {buscando ? 'Searching…' : 'Look up'}
         </button>
         {res && (
-          <Link to={`/serials?q=${encodeURIComponent(res.q)}`} className="self-center text-xs font-mono text-accent hover:text-accent/80">
+          <Link to={`/serials?q=${encodeURIComponent(res.q)}`} className="self-center text-base font-mono text-accent hover:text-accent/80">
             full history →
           </Link>
         )}
@@ -331,10 +398,10 @@ function Buscador() {
 
 function Dato({ t, v, s, tono = 'text-white' }) {
   return (
-    <div className="bg-white/[0.03] border border-white/[0.06] rounded px-4 py-3 min-w-0">
-      <p className="text-[10px] font-mono text-muted uppercase tracking-wider">{t}</p>
-      <p className={`mt-1 text-base font-sans truncate ${tono}`} title={v}>{v}</p>
-      <p className="mt-0.5 text-[11px] font-mono text-muted truncate" title={s}>{s}</p>
+    <div className="bg-white/[0.03] border border-white/[0.06] rounded px-5 py-4 min-w-0">
+      <p className="text-[13px] font-mono text-muted uppercase tracking-wider">{t}</p>
+      <p className={`mt-1 text-xl font-sans truncate ${tono}`} title={v}>{v}</p>
+      <p className="mt-0.5 text-sm font-mono text-muted truncate" title={s}>{s}</p>
     </div>
   );
 }
