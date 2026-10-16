@@ -45,7 +45,13 @@ async function fetchOverview() {
 }
 
 const norm = s => (s ?? '').trim().toUpperCase();
-const mismo = (a, b) => (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+// Mismo cliente si, sin espacios ni signos, un nombre contiene al otro
+// ("Penske" ≈ "Penske Truck Leasing"): así solo cuentan diferencias reales.
+const mismo = (a, b) => {
+  const x = (a ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const y = (b ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return !!x && !!y && (x.includes(y) || y.includes(x));
+};
 const fmt = n => (n == null ? '—' : n.toLocaleString('en-US'));
 const pct = (n, d) => (d ? `${Math.round((100 * n) / d)}%` : '—');
 const kmoney = n => {
@@ -111,7 +117,8 @@ export function Overview() {
     const quemando = new Map();
     for (const r of data.ws) {
       if (!facturasInv.has(r.so_number) || !activo(r.end_date) || sellPor.has(norm(r.serial))) continue;
-      const cuenta = nombreCuenta(facturasInv.get(r.so_number));
+      // NetSuite a veces repite el nombre ("Barcotec GmbH Barcotec GmbH")
+      const cuenta = nombreCuenta(facturasInv.get(r.so_number)).replace(/^(.+?)\s+\1$/, '$1');
       quemando.set(cuenta, (quemando.get(cuenta) ?? 0) + 1);
     }
     const quemandoTop = [...quemando.entries()].sort((a, b) => b[1] - a[1]);
@@ -157,12 +164,12 @@ export function Overview() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Hero valor={fmt(v.vivos)} titulo="devices with live coverage"
             sub={`${fmt(v.subs)} paid subscriptions · ${pct(v.subsConNombre, v.subs)} with a named end customer`} />
-          <Hero valor={fmt(v.porRenovar)} titulo={`renewals in the next ${DIAS_POR_VENCER} days`} color="text-warning"
+          <Hero valor={fmt(v.porRenovar)} titulo={`devices whose coverage ends in the next ${DIAS_POR_VENCER} days`} color="text-warning"
             sub={`${fmt(v.conSeguimiento)} already being followed up · ready to export to HubSpot`} />
-          <Hero valor={fmt(v.recuperados)} titulo="end customers recovered" color="text-success"
-            sub="known only from distributor reports — now attached to their serials" />
-          <Hero valor={data.revenue ? `${kmoney(data.revenue.totales.perdido)}` : '—'} titulo="warranty value lost per year" color="text-danger"
-            sub={data.revenue ? `expired since ${data.revenue.anios[0]} with no renewal — renewal found on ${data.revenue.totales.anual ? ((100 * data.revenue.totales.renovado) / data.revenue.totales.anual).toFixed(1) : '0'}%` : 'loading…'} />
+          <Hero valor={fmt(v.recuperados)} titulo="devices with their end customer recovered" color="text-success"
+            sub="named only in distributor reports — now attached to their serials" />
+          <Hero valor={data.revenue ? `${kmoney(data.revenue.totales.perdido)}` : '—'} titulo="annual warranty value not renewed" color="text-danger"
+            sub={data.revenue ? `plans that expired ${data.revenue.anios[0]} → today · renewal found on ${data.revenue.totales.anual ? ((100 * data.revenue.totales.renovado) / data.revenue.totales.anual).toFixed(1) : '0'}%` : 'loading…'} />
         </div>
       )}
 
@@ -175,17 +182,17 @@ export function Overview() {
           <h2 className="text-sm font-mono text-muted uppercase tracking-widest mb-2">What it found — that nobody could see before</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             <Hallazgo n={fmt(v.quemando)} tono="text-warning" a="/data-health"
-              titulo="subscriptions running with no customer"
-              texto={`Invoiced as subscriptions, the clock is running — but the distributor never reported selling them${v.quemandoTop.length ? ` (${v.quemandoTop.slice(0, 3).map(([c, n]) => `${c} ${n}`).join(', ')})` : ''}.`} />
+              titulo="subscription devices the distributor never reported as sold"
+              texto={`Invoiced as subscriptions and the clock is running, but they are not in any sell-out report${v.quemandoTop.length ? ` (${v.quemandoTop.slice(0, 3).map(([c, n]) => `${c} ${n}`).join(', ')})` : ''}.`} />
             <Hallazgo n={fmt(v.sinCobertura)} tono="text-danger" a="/data-health"
-              titulo={`of ${fmt(v.vendidos)} devices sold this year have no coverage on record`}
+              titulo={`of ${fmt(v.vendidos)} devices in the distributors’ sell-out reports have no coverage on record`}
               texto="No plan and no Launchpad registration: nobody can tell when they stop being covered." />
             <Hallazgo n={v.nsCheck ? fmt(v.nsMal) : '—'} tono="text-warning" a="/sell-out"
               titulo="distributor serials that don’t match NetSuite"
               texto="Typos caught automatically, and devices that left without their serial recorded in NetSuite." />
             <Hallazgo n={fmt(v.conflictos)} tono="text-warning" a="/data-health"
-              titulo="devices where Launchpad and the distributor name different customers"
-              texto="Resale or bad data — now visible device by device instead of hidden in two systems." />
+              titulo="devices where Launchpad and the distributor name a different customer"
+              texto="Resale or inconsistent data — now visible device by device instead of hidden in two systems." />
           </div>
         </section>
       )}
@@ -221,7 +228,7 @@ function Plata({ r }) {
           </div>
           <div>
             <p className="text-5xl font-num text-danger">{kmoney(r.totales.perdido)}</p>
-            <p className="text-base text-muted font-sans">a year in warranty coverage that expired with no renewal — {r.totales.unidades.toLocaleString('en-US')} units. Nobody calls the customer when a plan ends; the renewal tracker fixes that.</p>
+            <p className="text-base text-muted font-sans">in annual warranty value that expired {r.anios[0]} → today with no renewal found — {r.totales.unidades.toLocaleString('en-US')} units. Nobody calls the customer when a plan ends; the renewal tracker fixes that.</p>
           </div>
           <div>
             <p className="text-5xl font-num text-white">{r.totales.subsFin ? `${r.totales.subsRen} of ${r.totales.subsFin}` : '—'}</p>

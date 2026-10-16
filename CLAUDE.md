@@ -159,6 +159,17 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
 
+- 16/10/2026: **revisión a fondo de Overview + Renewals & Revenue**: todos
+  los números recalculados en Python independiente sobre los mismos archivos
+  del pipeline y comparados con lo que muestran las páginas → coinciden.
+  Bug corregido: una línea de SO partida en varias filas de `warranties` (una
+  por end customer; 72 casos, mayormente SSP12) contaba el importe ENTERO en
+  cada fila → ahora se reparte por cantidad. Textos corregidos: el valor no
+  renovado es el TOTAL anual de los planes vencidos 2024→hoy (no "por año");
+  "end customers recovered" son DISPOSITIVOS; "renewals next 90d" son equipos
+  cuya cobertura vence; conflictos Launchpad vs sell-out ignoran diferencias
+  de escritura (un nombre contiene al otro).
+
 - 16/10/2026: **Overview** ampliada para la presentación: tipografía más
   grande (pantalla/proyector), 4º número = valor de garantías perdido por año,
   sección "The money" (facturado, perdido por año en barras, suscripciones

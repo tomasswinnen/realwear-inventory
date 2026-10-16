@@ -144,6 +144,24 @@ export function calcular(data) {
     porEC.get(k).push(p);
   }
 
+  // Una misma línea de SO (so+sku) puede venir partida en varias filas de
+  // warranties (una por end customer / grupo de seriales). El importe de la
+  // línea se reparte entre esas filas por cantidad; si no, se contaría entero
+  // en cada fila (bug encontrado en la revisión del 16/10/2026).
+  const qtyPorClave = new Map();
+  const filasPorClave = new Map();
+  for (const p of planes) {
+    const k = `${p.so_number}|${p.sku}`;
+    qtyPorClave.set(k, (qtyPorClave.get(k) ?? 0) + (p.qty ?? 0));
+    filasPorClave.set(k, (filasPorClave.get(k) ?? 0) + 1);
+  }
+  const importeDe = p => {
+    const k = `${p.so_number}|${p.sku}`;
+    const total = importePorLinea.get(k) ?? 0;
+    const q = qtyPorClave.get(k) ?? 0;
+    return q > 0 ? (total * (p.qty ?? 0)) / q : total / (filasPorClave.get(k) || 1);
+  };
+
   // 3) Vencidos por año y si se renovaron
   const vencidos = [];
   for (const p of planes) {
@@ -151,7 +169,7 @@ export function calcular(data) {
     if (status === 'Cancelled' || !p.end_date || p.end_date > hoy) continue;
     const y = p.end_date.slice(0, 4);
     if (!anios.includes(y)) continue;
-    const importe = importePorLinea.get(`${p.so_number}|${p.sku}`) ?? 0;
+    const importe = importeDe(p);
     const anual = importe / Math.max(p.plan_years || 1, 1);
     const sers = serPorLinea.get(`${p.so_number}|${p.sku}`) ?? [];
     let frac; let como;
