@@ -159,6 +159,15 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   un build local (Playwright): guardar no colapsa lo abierto, la búsqueda
   avisa matches fuera de la vista.
 
+- 16/10/2026: **revenue FACTURADO real** (facturas + cash sales + notas de
+  crédito) en Renewals & Revenue y Overview, desde `src/data/invoiced_revenue.json`
+  = foto de `reporte_revenue.py` (carpeta del pipeline) del 16/10. Incluye las
+  suscripciones de device ($88k 2025, $91k 2026). Para actualizar: correr
+  reporte_revenue.bat y regenerar el JSON (años × categoría + invoicedBySo).
+  PENDIENTE: llevarlo al pipeline/Supabase para que sea automático. "Still to
+  invoice" = SO abiertas − lo ya facturado desde esas SO (SO20195: $979k
+  vendido, $544k facturado).
+
 - 16/10/2026: **revisión a fondo de Overview + Renewals & Revenue**: todos
   los números recalculados en Python independiente sobre los mismos archivos
   del pipeline y comparados con lo que muestran las páginas → coinciden.

@@ -222,9 +222,9 @@ function Plata({ r }) {
       <div className="mt-3 grid grid-cols-1 lg:grid-cols-[1fr_1.4fr] gap-5">
         <div className="space-y-3">
           <div>
-            <p className="text-5xl font-num text-white">{kmoney(r.totales.revWar + r.totales.revSw)}</p>
-            <p className="text-base text-muted font-sans">billed since {r.anios[0]} · {kmoney(r.totales.revWar)} warranties · {kmoney(r.totales.revSw)} software
-              {r.totales.abierto > 0 && <> · <span className="text-slate-300">{kmoney(r.totales.abierto)} more booked, not billed yet</span></>}</p>
+            <p className="text-5xl font-num text-white">{kmoney(r.totales.invTotal)}</p>
+            <p className="text-base text-muted font-sans">invoiced since {r.anios[0]} · {kmoney(r.totales.invWar)} warranties · {kmoney(r.totales.invSw)} software · {kmoney(r.totales.invDev)} device subscriptions
+              {r.totales.pendiente > 0 && <> · <span className="text-slate-300">{kmoney(r.totales.pendiente)} still to invoice on open orders</span></>}</p>
           </div>
           <div>
             <p className="text-5xl font-num text-danger">{kmoney(r.totales.perdido)}</p>
@@ -252,7 +252,7 @@ function Plata({ r }) {
             ))}
           </div>
           <p className="mt-3 text-[13px] font-mono text-muted leading-relaxed">
-            Billed = sales orders Billed/Closed. Renewal = the device got new coverage, or the same end customer bought a new plan around the end date; renewals sold through a distributor with no serials or end customer can’t be linked, so “lost” is an upper bound. Device-subscription invoices not included yet.
+            Invoiced = NetSuite invoices (as of {r.facturadoAl}). Renewal = the device got new coverage, or the same end customer bought a new plan around the end date; renewals sold through a distributor with no serials or end customer can’t be linked, so “lost” is an upper bound.
           </p>
         </div>
       </div>

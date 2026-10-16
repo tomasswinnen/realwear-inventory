@@ -5,6 +5,11 @@ import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { HOY, nombreCuenta, planLabel } from '../utils/warranty';
+// Revenue FACTURADO de verdad (facturas, cash sales y notas de crédito de
+// NetSuite), foto del reporte_revenue.py. Hasta que el pipeline lo cargue en
+// Supabase, se actualiza re-corriendo reporte_revenue.bat y regenerando este
+// JSON. Incluye las suscripciones de device (facturas sueltas).
+import FACTURADO_NS from '../data/invoiced_revenue.json';
 
 // Renewals & Revenue: cuánto facturan garantías y suscripciones por año y
 // cuánto se pierde cuando vencen y no se renuevan. Todo en vivo:
@@ -206,7 +211,19 @@ export function calcular(data) {
       y,
       revWar: rev[`warranty|${y}`] ?? 0,
       revSw: rev[`software|${y}`] ?? 0,
+      invWar: FACTURADO_NS.years?.[y]?.warranty ?? 0,
+      invSw: FACTURADO_NS.years?.[y]?.software_sub ?? 0,
+      invDev: FACTURADO_NS.years?.[y]?.device_sub ?? 0,
       abierto: suma(abiertas.filter(a => a.so_date?.startsWith(y)), a => a.amount),
+      // Lo que falta facturar de las SO abiertas: lo vendido menos lo que ya
+      // salió en facturas creadas desde esa SO (SO20195 está facturada en parte)
+      pendiente: (() => {
+        const porSo = new Map();
+        for (const a of abiertas.filter(x => x.so_date?.startsWith(y))) porSo.set(a.so_number, (porSo.get(a.so_number) ?? 0) + a.amount);
+        let t = 0;
+        for (const [so, monto] of porSo) t += Math.max(0, monto - (FACTURADO_NS.invoicedBySo?.[so] ?? 0));
+        return t;
+      })(),
       lineas: v.length,
       unidades: suma(v, x => x.qty ?? 0),
       anual: suma(v, x => x.anual),
@@ -216,9 +233,10 @@ export function calcular(data) {
     };
   });
   const tot = k => porAnio.reduce((t, r) => t + r[k], 0);
-  const totales = Object.fromEntries(['revWar', 'revSw', 'abierto', 'lineas', 'unidades', 'anual', 'renovado', 'perdido', 'subsFin', 'subsRen'].map(k => [k, tot(k)]));
+  for (const r of porAnio) r.invTotal = r.invWar + r.invSw + r.invDev;
+  const totales = Object.fromEntries(['revWar', 'revSw', 'invWar', 'invSw', 'invDev', 'invTotal', 'pendiente', 'abierto', 'lineas', 'unidades', 'anual', 'renovado', 'perdido', 'subsFin', 'subsRen'].map(k => [k, tot(k)]));
   return {
-    anios, porAnio, totales, vencidos, abiertas, canceladas, subsFin, subsFuturo,
+    anios, porAnio, totales, facturadoAl: FACTURADO_NS.asOf, vencidos, abiertas, canceladas, subsFin, subsFuturo,
     ssp12Faltante: planes.some(p => p.sintetico && p.sku === 'SSP12'),
   };
 }
@@ -227,8 +245,9 @@ async function exportarExcel(v) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
   const res = v.porAnio.map(r => ({
-    Year: r.y, 'Warranties billed': Math.round(r.revWar), 'Software subs billed': Math.round(r.revSw),
-    'Booked, not billed yet': Math.round(r.abierto), 'Plan lines that ended': r.lineas, 'Units that ended': r.unidades,
+    Year: r.y, 'Warranties invoiced': Math.round(r.invWar), 'Software subs invoiced': Math.round(r.invSw),
+    'Device subs invoiced': Math.round(r.invDev), 'Total invoiced': Math.round(r.invTotal),
+    'Still to invoice on open SOs': Math.round(r.pendiente), 'Plan lines that ended': r.lineas, 'Units that ended': r.unidades,
     'Annual value that ended': Math.round(r.anual), 'Renewal found': Math.round(r.renovado),
     'Not renewed (lost)': Math.round(r.perdido), 'Device subs ended': r.subsFin, 'Device subs renewed': r.subsRen,
   }));
@@ -283,10 +302,10 @@ export function Revenue() {
 
       {loading || !v ? <KPISkeleton /> : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Hero titulo="Billed since 2024" valor={kmoney(v.totales.revWar + v.totales.revSw)}
-            sub={`${kmoney(v.totales.revWar)} warranties · ${kmoney(v.totales.revSw)} software · device subscriptions pending`} color="text-accent" />
-          <Hero titulo="Booked, not billed yet" valor={kmoney(v.totales.abierto)}
-            sub={`${v.abiertas.length} lines on open sales orders`} />
+          <Hero titulo="Invoiced since 2024" valor={kmoney(v.totales.invTotal)}
+            sub={`${kmoney(v.totales.invWar)} warranties · ${kmoney(v.totales.invSw)} software · ${kmoney(v.totales.invDev)} device subscriptions`} color="text-accent" />
+          <Hero titulo="Still to invoice on open orders" valor={kmoney(v.totales.pendiente)}
+            sub="sold on open sales orders, not invoiced yet" />
           <Hero titulo="Warranty value that ended" valor={kmoney(v.totales.anual)}
             sub={`${v.totales.unidades.toLocaleString('en-US')} units · ${v.totales.lineas.toLocaleString('en-US')} plan lines, per year of coverage`} />
           <Hero titulo="Not renewed — lost per year" valor={kmoney(v.totales.perdido)} color="text-danger"
@@ -309,15 +328,12 @@ export function Revenue() {
                 </tr>
               </thead>
               <tbody>
-                <Seccion t="Revenue billed" />
-                <Fila t="Warranties / service plans" k="revWar" v={v} f={money} />
-                <Fila t="Software subscriptions (Device Pro, ARIOS, Cloud)" k="revSw" v={v} f={money} />
-                <tr className="border-b border-white/[0.04]">
-                  <td className="px-4 py-2 font-sans text-slate-300">Device subscriptions (billed on invoices)</td>
-                  {v.porAnio.map(r => <td key={r.y} className="px-4 py-2 text-right font-mono text-muted">pending</td>)}
-                  <td className="px-4 py-2 text-right font-mono text-muted">pending</td>
-                </tr>
-                <Fila t="Booked on open SOs, not billed yet" k="abierto" v={v} f={money} tono="text-muted" />
+                <Seccion t={`Revenue invoiced (NetSuite invoices, as of ${v.facturadoAl})`} />
+                <Fila t="Warranties / service plans" k="invWar" v={v} f={money} />
+                <Fila t="Software subscriptions (Device Pro, ARIOS, Cloud)" k="invSw" v={v} f={money} />
+                <Fila t="Device subscriptions (Arc 3 / Arc 2 / Navigator plans)" k="invDev" v={v} f={money} />
+                <Fila t="Total invoiced" k="invTotal" v={v} f={money} negrita />
+                <Fila t="Still to invoice on open sales orders" k="pendiente" v={v} f={money} tono="text-muted" />
                 <Seccion t="Warranties that ended" />
                 <Fila t="Units that ended" k="unidades" v={v} f={n => Math.round(n).toLocaleString('en-US')} />
                 <Fila t="Annual value that ended" k="anual" v={v} f={money} />
@@ -406,8 +422,7 @@ export function Revenue() {
       {v && (
         <div className="text-[10px] text-muted font-mono leading-relaxed space-y-1.5">
           <p className="text-slate-300">How these numbers are built</p>
-          <p>· Revenue billed = NetSuite sales-order lines for plan and software SKUs on SOs with status Billed or Closed, by SO date (base-currency line amounts). Open SOs are shown as “booked, not billed yet”; cancelled SOs are left out everywhere ({v.canceladas.length} lines).</p>
-          <p>· Device subscriptions (Arc 3 / Navigator annual plans) are billed on standalone invoices and their sales-order line is $0, so they aren’t in these numbers yet — that row fills in once invoice amounts are loaded.</p>
+          <p>· Revenue invoiced = NetSuite invoice, cash-sale and credit-memo lines by invoice date (report of {v.facturadoAl}): plan SKUs = warranties; Device Pro / ARIOS / Cloud = software; any other line with coverage dates on it = device subscription. “Still to invoice” = open sales orders minus what has already been invoiced from them. Cancelled SOs are left out everywhere ({v.canceladas.length} lines).</p>
           <p>· Annual value = line amount ÷ plan years. A renewal is found when a covered serial gets a later coverage (NetSuite plan or Launchpad), or the same end customer buys a new plan from 180 days before to 120 days after the end. Lines with no serials and no end customer can’t be traced (“no trace”), so “not renewed” is an upper bound.</p>
           {v.ssp12Faltante && <p>· SSP12 (12-month plans sold Oct-2023 → Oct-2024) has no line dates on the site yet; its end date is estimated as SO date + 12 months (marked ~).</p>}
         </div>
