@@ -1,13 +1,20 @@
-// Programa PepsiCo — datos de la orden cargados a mano (act. 2026-09-22).
+// Programa PepsiCo — datos de la orden cargados a mano (act. 2026-10-19).
 // Fuente: POs FINALES de Peak Technologies (Interim Price Agreement,
 // "Peak / Pepsi Final Hardware POs" — versiones 9.2.26 F) + kit list PepsiCo.
 // qty_shipped se actualiza a mano hasta que el programa termine.
 export const PEPSI = {
+  as_of: '2026-10-19',
   customer: 'PepsiCo',
   reseller: 'Peak Technologies',
   program: 'WES Navigator 520 deployment',
   total_kits: 1537,
   currency: 'USD',
+  // Estado 10/19 (chat "Pepsi" de Teams + NetSuite): falta todo el tramo Q1
+  // (682 kits). Peak todavia no libero la fecha (Pam, 10/13); la PO Q1 de
+  // hardware sigue sin SO en NetSuite. Los multi-chargers 127105 llegan del
+  // proveedor ~15/12 (Kyle, 10/12). Peak mando PO aparte por 150 cargadores
+  // 65W (SO20244, 9/23, facturada). SO20248/20290/20291 = 1 Navigator 520 a
+  // $0 cada una, fuera de las POs del programa.
   // Estado 9/22: los 3 envios estan asentados en NetSuite (IF20405, IF20449,
   // IF20456/57/60) y SO20159 esta FACTURADA (Billed, $1,837,331). Al salir del
   // backlog abierto, el 'vivo' de la pagina da 0: mandan los qty_shipped
@@ -16,10 +23,12 @@ export const PEPSI = {
   // Estado 9/10: llego la Service PO de Peak -> SO20195 en NetSuite (9/2),
   // servicios para los 1,537 kits incl. ARIOS Cloud Ultra; fulfilled 9/10,
   // pending billing. La PO Q1 de hardware sigue sin cargarse en NetSuite.
-  program_note: 'Q1 2027 hardware PO not entered in NetSuite yet',
+  program_note: 'Q1 2027 hardware PO (682 kits) not entered in NetSuite yet · Peak has not released the ship date (Pam, 10/13)',
   service_order: {
     so_number: 'SO20195', date: '2026-09-02', total: 977716.44,
     detail: 'Warranty $385,940.70 · Support $195,045.30 · RMA pool $66,398.40 · ARIOS Cloud Ultra $330,332.04 — for all 1,537 kits · Q4 tranche (855) fulfilled 9/10 · Q1 tranche (682) still open in NetSuite',
+    // Lineas de 682 abiertas en SO20195 (SoLines, 10/19)
+    open_kits: 682, open_amount: 433833.84,
   },
   // Mail de Timon (9/3) con los PDFs de las dos POs finales de hardware
   po_email: 'https://outlook.office365.com/owa/?ItemID=AAMkADEwZGQxZDU1LWY3YzUtNGZlZC1hZmE2LTg2MGRjYWU1OWRiNwBGAAAAAAATk%2F8Xj0YLTIdroYUHAFJ2BwAzCI4YJJD%2BTKdnqF547uDVAAAAAAEMAAAzCI4YJJD%2BTKdnqF547uDVAAGq%2BXqAAAA%3D&exvsurl=1&viewmodel=ReadMessageItem',
@@ -35,7 +44,7 @@ export const PEPSI = {
       po_number: 'POINC110039090', date: '2026-08-11', kits: 682, tranche: 'Q1 2027',
       total: 1340036.40,
       ship_not_before: '2026-11-01',
-      note: 'Final PO (9/2/26) — PO says do not ship until after 11/1/2026, but internal planning (9/22) wants the package to ARRIVE at Peak before Nov 1: confirm timing · not entered in NetSuite yet',
+      note: 'Final PO (9/2/26) — PO says do not ship until after 11/1/2026 · not entered in NetSuite yet · 10/13 Peak: "schedule is not released", no date yet · next-shipment call with Nataly 10/19',
     },
   ],
   items: [
@@ -77,11 +86,11 @@ export const PEPSI = {
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: { POINC110038312: 180, POINC110039090: 180 },
       qty_ordered_total: 360, qty_shipped: 180, status: 'confirmed',
-      note: '63 units short of kit requirement. Shipment 2 (9/10 = IF20449): 150 · Shipment 3 (9/15 = IF20456/60): 30 — Q4 allocation (180) fully shipped & billed. Stock left: 1 unit',
+      note: '63 units short of kit requirement. Shipment 2 (9/10 = IF20449): 150 · Shipment 3 (9/15 = IF20456/60): 30 — Q4 allocation (180) fully shipped & billed. Stock left: 1 unit. 10/12 (Kyle): if Peak needs the Q1 devices before the chargers arrive, propose complimentary single battery chargers as a temporary fix, shipped HK → Portland',
       // La PO de reposicion abierta esta en riesgo: el chip del cargador es
       // EOL. No se cuenta como stock entrante en el calculo de cobertura.
       incoming_at_risk: true,
-      incoming_risk_note: 'Incoming PO2407 (2,000 u, Sunrise Simcom, ordered 12/2025, still pending receipt) at risk — charger chip is EOL',
+      incoming_risk_note: 'Incoming PO2407 (2,000 u, Sunrise Simcom, ordered 12/2025, still pending receipt): vendor estimates shipping ~Dec 15 (Kyle, 10/12) — charger chip is EOL',
     },
     {
       sku: '127125', name: 'Workband 2',
@@ -90,7 +99,7 @@ export const PEPSI = {
       qty_per_kit: null, qty_required: null,
       qty_by_po: { POINC110038312: 855, POINC110039090: 690 },
       qty_ordered_total: 1545, qty_shipped: 855, status: 'confirmed',
-      note: 'Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15 = IF20456/60): 400 — fully shipped & billed. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2',
+      note: 'Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15 = IF20456/60): 400 — fully shipped & billed. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2. Most stock sits in HK: move to Portland before the Q1 shipment',
     },
     {
       sku: '127129', name: '65W USB-C Charger',
@@ -98,8 +107,22 @@ export const PEPSI = {
       category: 'accessory', uom: 'EA', unit_price: null, serialized: false,
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: {},
-      qty_ordered_total: 0, qty_shipped: 0, status: 'required_not_ordered',
-      note: 'Not on the Peak POs — Peak will issue a separate PO for the power supplies. RealWear stock arriving via PO2452 (Shanghai Sunrise Simcom): 520 of 2,000 received, 1,480 open',
+      // Fuera de las 2 POs: Peak mando una PO aparte -> SO20244
+      other_orders: [{ so_number: 'SO20244', date: '2026-09-23', qty: 150, note: 'billed' }],
+      qty_ordered_total: 150, qty_shipped: 150, status: 'partially_ordered',
+      note: 'Not on the two Peak hardware POs — Peak sent a separate PO: SO20244 (9/23), 150 units, $5,130, billed. Kit requirement is 423 → 273 still not ordered. RealWear stock is fine (PO2452 fully received)',
     },
+  ],
+  // Lo ultimo del chat "Pepsi" de Teams (mas nuevo primero). Solo lo que
+  // afecta envios / entregas; lo comercial (MSA, matriz de servicios) resumido.
+  chat_url: 'https://teams.microsoft.com/l/message/19%3A035d2caf12094d598ae92c3de2d54b92%40thread.v2/1792358166203?context=%7b%22contextType%22%3a%22chat%22%7d&tenantId=3fb8c4c4-8d65-442d-8093-6d8790fc6b85',
+  updates: [
+    { date: '2026-10-19', text: 'Mon 10am EST: next-shipment discussion with Nataly · 12pm EST: finish the service matrix with Peak & Pepsi · Tue 10/20 1:30pm EST: service support alignment call with Gopal (Pepsi)' },
+    { date: '2026-10-14', text: 'Peak (Pam) asks whether the devices already shipped in the "pilot" phase need service POs / entitlement — RealWear to answer this week' },
+    { date: '2026-10-13', text: 'Peak (Pam): no date yet for the next shipment — "schedule is not released"' },
+    { date: '2026-10-12', text: 'Multi-chargers (127105) expected from the vendor ~Dec 15. If Peak needs devices earlier, offer complimentary single battery chargers as a stop-gap, shipped HK → Portland' },
+    { date: '2026-10-09', text: 'Service responsibility matrix reviewed with Pepsi & Peak; open points on Level 2 support, RMA and warranty registration' },
+    { date: '2026-10-01', text: 'Pepsi: Peak bills RMA services directly; RealWear devices/warranty/cloud/support go through Peak; Pepsi wants steady-state pricing for 8,000 devices; services co-termed' },
+    { date: '2026-09-23', text: 'Peak separate PO for 65W USB-C chargers → SO20244, 150 units, billed' },
   ],
 };

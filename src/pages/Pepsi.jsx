@@ -84,6 +84,23 @@ export function Pepsi() {
   });
   const itemsCortos = filas.filter(f => f.falta != null && f.falta > 0).length;
 
+  // Lo que falta mandar (hoy: todo el tramo Q1) y que lo frena.
+  const pendientes = filas.filter(f => f.porEnviar > 0);
+  const kitsPendientes = filas.find(f => f.category === 'device')?.porEnviar ?? 0;
+  const valorHw = pendientes.reduce((s, f) => s + f.porEnviar * (f.unit_price ?? 0), 0);
+  const frenos = [];
+  for (const f of filas) {
+    if (f.falta != null && f.falta > 0) {
+      frenos.push({ tipo: 'danger', sku: f.sku, txt: `${f.name}: need ${f.falta.toLocaleString()} more — stock ${num((f.pdx ?? 0) + (f.hk ?? 0))}${f.incoming_at_risk && f.incoming ? `; incoming ${f.incoming.toLocaleString()} at risk, not counted` : ''}` });
+    } else if (f.porEnviar > 0 && f.pdx != null && f.pdx < f.porEnviar) {
+      frenos.push({ tipo: 'warning', sku: f.sku, txt: `${f.name}: only ${num(f.pdx)} in Portland for ${f.porEnviar.toLocaleString()} to ship — move ${(f.porEnviar - f.pdx).toLocaleString()} from HK` });
+    }
+  }
+  for (const f of filas) {
+    const gap = (f.qty_required ?? 0) - f.qty_ordered_total;
+    if (gap > 0) frenos.push({ tipo: 'muted', sku: f.sku, txt: `${f.name}: kit list needs ${f.qty_required.toLocaleString()}, ordered ${f.qty_ordered_total.toLocaleString()} → ${gap.toLocaleString()} not on any PO` });
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -111,12 +128,13 @@ export function Pepsi() {
           <KPICard
             label="Q4 2026"
             value={`${num(pos[0].kits)} kits`}
-            sub={`${pos[0].po_number.slice(-6)} · ${pos[0].date}`}
+            sub={`${pos[0].po_number.slice(-6)} · shipped & billed`}
           />
           <KPICard
-            label="Q1 2027"
-            value={`${num(pos[1].kits)} kits`}
-            sub={`ship not before ${pos[1].ship_not_before}`}
+            label="Left to ship"
+            value={`${num(kitsPendientes)} kits`}
+            sub={`Q1 2027 · not before ${pos[1].ship_not_before}`}
+            color={kitsPendientes ? 'text-warning' : 'text-success'}
           />
         </div>
       )}
@@ -127,7 +145,7 @@ export function Pepsi() {
             Service PO in NetSuite: {PEPSI.service_order.so_number} ({PEPSI.service_order.date}) — {formatCurrency(PEPSI.service_order.total)} · {PEPSI.service_order.detail}
           </p>
         )}
-        {PEPSI.program_note && (
+        {PEPSI.program_note && !pendientes.length && (
           <p className="text-[11px] font-mono text-warning">{PEPSI.program_note}</p>
         )}
         {pos.filter(p => p.note).map(p => (
@@ -144,6 +162,37 @@ export function Pepsi() {
           </a>
         )}
       </div>
+
+      {/* Lo que falta mandar y lo que lo frena */}
+      {!loading && pendientes.length > 0 && (
+        <section className="bg-card rounded-lg border border-warning/25 p-4 space-y-3">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <h2 className="text-sm font-sans font-semibold text-white">
+              Left to ship: {num(kitsPendientes)} kits
+              <span className="text-muted font-normal"> · {formatCurrency(valorHw)} hardware{PEPSI.service_order?.open_amount ? ` + ${formatCurrency(PEPSI.service_order.open_amount)} services open on ${PEPSI.service_order.so_number}` : ''}</span>
+            </h2>
+            <span className="text-[10px] font-mono text-muted">as of {PEPSI.as_of}</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {pendientes.map(f => (
+              <span key={f.sku} className="text-[11px] font-mono px-2 py-1 rounded bg-white/[0.05] text-slate-200">
+                <span className="text-white font-medium">{f.porEnviar.toLocaleString()}</span> × {f.name}
+              </span>
+            ))}
+          </div>
+          {(frenos.length > 0 || PEPSI.program_note) && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-mono text-muted uppercase tracking-wider">Before it can ship</p>
+              {PEPSI.program_note && <p className="text-[11px] font-mono text-warning">• {PEPSI.program_note}</p>}
+              {frenos.map((x, i) => (
+                <p key={i} className={`text-[11px] font-mono ${x.tipo === 'danger' ? 'text-danger' : x.tipo === 'warning' ? 'text-warning' : 'text-muted'}`}>
+                  • <span className="text-slate-300">{x.sku}</span> {x.txt}
+                </p>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* La tabla que importa: pedido vs stock vs entrando */}
       <section className="space-y-2">
@@ -226,6 +275,9 @@ export function Pepsi() {
                           {pos.map(p => (
                             <div key={p.po_number}>{(f.qty_by_po[p.po_number] ?? 0).toLocaleString()} · {p.tranche}</div>
                           ))}
+                          {(f.other_orders ?? []).map(o => (
+                            <div key={o.so_number}>{o.qty.toLocaleString()} · {o.so_number} (separate PO)</div>
+                          ))}
                         </div>
                       </td>
                       <td className="px-4 py-2.5 font-mono">
@@ -265,6 +317,9 @@ export function Pepsi() {
                             : f.falta > 0
                               ? <span className="text-danger">need {f.falta.toLocaleString()} more</span>
                               : <span className="text-success">covered</span>}
+                        {(f.qty_required ?? 0) > f.qty_ordered_total && f.qty_ordered_total > 0 && (
+                          <p className="text-[10px] text-muted mt-0.5">kit needs {(f.qty_required - f.qty_ordered_total).toLocaleString()} more, not ordered</p>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -293,6 +348,23 @@ export function Pepsi() {
           </p>
         ))}
       </section>
+
+      {/* Lo ultimo del chat de Teams (cargado a mano en data/pepsi.js) */}
+      {PEPSI.updates?.length > 0 && (
+        <section className="space-y-1.5">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h2 className="text-sm font-sans font-semibold text-white">Latest from the Pepsi chat</h2>
+            {PEPSI.chat_url && (
+              <a href={PEPSI.chat_url} target="_blank" rel="noreferrer" className="text-[11px] font-mono text-accent hover:underline">Open in Teams ↗</a>
+            )}
+          </div>
+          {PEPSI.updates.map((u, i) => (
+            <p key={i} className="text-[11px] font-mono text-muted">
+              <span className="text-slate-300">{u.date.slice(5).replace('-', '/')}</span> — {u.text}
+            </p>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
