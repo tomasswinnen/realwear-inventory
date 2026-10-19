@@ -9,8 +9,10 @@ export const PEPSI = {
   program: 'WES Navigator 520 deployment',
   total_kits: 1537,
   currency: 'USD',
-  // Estado 10/19 (chat "Pepsi" de Teams + NetSuite): falta todo el tramo Q1
-  // (682 kits). Peak todavia no libero la fecha (Pam, 10/13); la PO Q1 de
+  // Estado 10/19 (chat "Pepsi" de Teams + NetSuite): falta todo el segundo
+  // tramo (682 kits) y sale en NOVIEMBRE 2026 (Tomas, 10/19): la PO lo llama
+  // "Q1 2027" pero dice "no antes del 1/11". Peak todavia no confirmo el dia
+  // exacto (Pam, 10/13); la PO de
   // hardware sigue sin SO en NetSuite. Los multi-chargers 127105 llegan del
   // proveedor ~15/12 (Kyle, 10/12). Peak mando PO aparte por 150 cargadores
   // 65W (SO20244, 9/23, facturada). SO20248/20290/20291 = 1 Navigator 520 a
@@ -23,10 +25,10 @@ export const PEPSI = {
   // Estado 9/10: llego la Service PO de Peak -> SO20195 en NetSuite (9/2),
   // servicios para los 1,537 kits incl. ARIOS Cloud Ultra; fulfilled 9/10,
   // pending billing. La PO Q1 de hardware sigue sin cargarse en NetSuite.
-  program_note: 'Q1 2027 hardware PO (682 kits) not entered in NetSuite yet · Peak has not released the ship date (Pam, 10/13)',
+  program_note: 'November 2026 shipment (682 kits): hardware PO not entered in NetSuite yet · Peak has not confirmed the exact date (Pam, 10/13)',
   service_order: {
     so_number: 'SO20195', date: '2026-09-02', total: 977716.44,
-    detail: 'Warranty $385,940.70 · Support $195,045.30 · RMA pool $66,398.40 · ARIOS Cloud Ultra $330,332.04 — for all 1,537 kits · Q4 tranche (855) fulfilled 9/10 · Q1 tranche (682) still open in NetSuite',
+    detail: 'Warranty $385,940.70 · Support $195,045.30 · RMA pool $66,398.40 · ARIOS Cloud Ultra $330,332.04 — for all 1,537 kits · Q4 tranche (855) fulfilled 9/10 · November tranche (682) still open in NetSuite',
     // Lineas de 682 abiertas en SO20195 (SoLines, 10/19)
     open_kits: 682, open_amount: 433833.84,
   },
@@ -41,10 +43,11 @@ export const PEPSI = {
       note: 'Final PO (9/2/26, incl. $171,000 expedite fee) — in NetSuite as SO20159 (8/28): fully shipped in 3 shipments and BILLED ($1.84M, 9/16)',
     },
     {
-      po_number: 'POINC110039090', date: '2026-08-11', kits: 682, tranche: 'Q1 2027',
+      // La PO lo llama "Q1 2027", pero el envio es en noviembre 2026
+      po_number: 'POINC110039090', date: '2026-08-11', kits: 682, tranche: 'Nov 2026', po_label: 'Q1 2027',
       total: 1340036.40,
       ship_not_before: '2026-11-01',
-      note: 'Final PO (9/2/26) — PO says do not ship until after 11/1/2026 · not entered in NetSuite yet · 10/13 Peak: "schedule is not released", no date yet · next-shipment call with Nataly 10/19',
+      note: 'Final PO (9/2/26), labeled "Q1 2027" — ships in November 2026 (PO: not before 11/1) · not entered in NetSuite yet · 10/13 Peak: "schedule is not released", no date yet · next-shipment call with Nataly 10/19',
     },
   ],
   items: [
@@ -86,7 +89,7 @@ export const PEPSI = {
       qty_per_kit: 0.275, qty_required: 423,
       qty_by_po: { POINC110038312: 180, POINC110039090: 180 },
       qty_ordered_total: 360, qty_shipped: 180, status: 'confirmed',
-      note: '63 units short of kit requirement. Shipment 2 (9/10 = IF20449): 150 · Shipment 3 (9/15 = IF20456/60): 30 — Q4 allocation (180) fully shipped & billed. Stock left: 1 unit. 10/12 (Kyle): if Peak needs the Q1 devices before the chargers arrive, propose complimentary single battery chargers as a temporary fix, shipped HK → Portland',
+      note: '63 units short of kit requirement. Shipment 2 (9/10 = IF20449): 150 · Shipment 3 (9/15 = IF20456/60): 30 — Q4 allocation (180) fully shipped & billed. Stock left: 1 unit. 10/12 (Kyle): if Peak needs the devices before the chargers arrive, propose complimentary single battery chargers as a temporary fix, shipped HK → Portland. With the 682 kits going out in November and the chargers ~Dec 15, the stop-gap is needed',
       // La PO de reposicion abierta esta en riesgo: el chip del cargador es
       // EOL. No se cuenta como stock entrante en el calculo de cobertura.
       incoming_at_risk: true,
@@ -99,7 +102,7 @@ export const PEPSI = {
       qty_per_kit: null, qty_required: null,
       qty_by_po: { POINC110038312: 855, POINC110039090: 690 },
       qty_ordered_total: 1545, qty_shipped: 855, status: 'confirmed',
-      note: 'Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15 = IF20456/60): 400 — fully shipped & billed. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2. Most stock sits in HK: move to Portland before the Q1 shipment',
+      note: 'Shipment 2 (9/10 = IF20449): 455 · Shipment 3 (9/15 = IF20456/60): 400 — fully shipped & billed. Absent from PepsiCo kit list — Navigator 520 already includes a Workband 2. Most stock sits in HK: move to Portland before the November shipment',
     },
     {
       sku: '127129', name: '65W USB-C Charger',

@@ -50,7 +50,7 @@ async function fetchStockPepsi() {
   return { stock, entrando, enviadoVivo, abiertoVivo, hayDatos: !snapRes.error };
 }
 
-// Etiqueta corta de entrega por PO: "Q4 2026" / "Q1 2027 (no antes de 11-01)"
+// Etiqueta corta de entrega por PO: "Q4 2026" / "Nov 2026 (no antes de 11-01)"
 function entregaPo(po) {
   return po.ship_not_before ? `${po.tranche} · not before ${po.ship_not_before}` : po.tranche;
 }
@@ -84,7 +84,7 @@ export function Pepsi() {
   });
   const itemsCortos = filas.filter(f => f.falta != null && f.falta > 0).length;
 
-  // Lo que falta mandar (hoy: todo el tramo Q1) y que lo frena.
+  // Lo que falta mandar (hoy: todo el tramo de noviembre) y que lo frena.
   const pendientes = filas.filter(f => f.porEnviar > 0);
   const kitsPendientes = filas.find(f => f.category === 'device')?.porEnviar ?? 0;
   const valorHw = pendientes.reduce((s, f) => s + f.porEnviar * (f.unit_price ?? 0), 0);
@@ -133,7 +133,7 @@ export function Pepsi() {
           <KPICard
             label="Left to ship"
             value={`${num(kitsPendientes)} kits`}
-            sub={`Q1 2027 · not before ${pos[1].ship_not_before}`}
+            sub={`${pos[1].tranche} · from ${pos[1].ship_not_before}${pos[1].po_label ? ` (PO says ${pos[1].po_label})` : ''}`}
             color={kitsPendientes ? 'text-warning' : 'text-success'}
           />
         </div>
