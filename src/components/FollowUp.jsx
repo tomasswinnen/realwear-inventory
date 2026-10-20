@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { invalidarCache } from '../hooks/useQuery';
 
 // Seguimiento de renovaciones, compartido por Subscriptions y Warranties.
 // Cada página tiene su tabla (subscription_followup / warranty_followup), con
@@ -53,6 +54,7 @@ export async function guardarSeguimiento(tabla, regs, estado, nota) {
   const filas = [...porSerial.values()];
   const { error } = await supabase.from(tabla).upsert(filas, { onConflict: 'serial' });
   if (error) throw new Error(error.message);
+  invalidarCache(); // la próxima visita a cualquier página vuelve a consultar
   return filas;
 }
 

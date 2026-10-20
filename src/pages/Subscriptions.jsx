@@ -48,25 +48,27 @@ async function fetchSubs() {
     fetchSelloutMap(),
     traer(() => supabase.from('subscription_followup').select('*')),
   ]);
-  let invSer = [];
+  // Segunda vuelta (depende de la primera): seriales de las facturas y
+  // distribuidor de cada device de Launchpad — a quién le facturó RealWear
+  // ese serial (serial_shipments.cliente). Lotes de 100 (el IN va en la
+  // URL). Las dos cosas se piden a la vez.
   const facturas = [...new Set((inv ?? []).map(w => w.so_number).filter(Boolean))];
-  if (facturas.length) {
-    invSer = (await traer(() => supabase.from('warranty_serials').select('*')
-      .in('so_number', facturas))) ?? [];
-  }
-
-  // Distribuidor de cada device de Launchpad: a quién le facturó RealWear ese
-  // serial (serial_shipments.cliente). Lotes de 100 (el IN va en la URL).
   const seriales = [...new Set((lp ?? [])
     .filter(r => r.plan_code !== 'SSP-STANDARD')
     .map(r => r.serial).filter(Boolean))];
-  const envios = {};
   const lotes = [];
   for (let i = 0; i < seriales.length; i += 100) lotes.push(seriales.slice(i, i + 100));
-  const eventos = await Promise.all(lotes.map(lote =>
-    traer(() => supabase.from('serial_shipments')
-      .select('serial, cliente, so_number, fecha, doc_type')
-      .in('serial', lote))));
+  const [invSerRes, eventos] = await Promise.all([
+    facturas.length
+      ? traer(() => supabase.from('warranty_serials').select('*').in('so_number', facturas))
+      : Promise.resolve([]),
+    Promise.all(lotes.map(lote =>
+      traer(() => supabase.from('serial_shipments')
+        .select('serial, cliente, so_number, fecha, doc_type')
+        .in('serial', lote)))),
+  ]);
+  const invSer = invSerRes ?? [];
+  const envios = {};
   for (const ev of eventos.flat()) {
     if (!ev?.cliente) continue;
     const prev = envios[ev.serial];

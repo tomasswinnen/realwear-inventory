@@ -38,36 +38,37 @@ async function fetchSerials(q) {
   // fulfillment masivo (600 seriales de una) puede comerse casi toda esa
   // ventana, dejando la vista en un puñado de órdenes. Se traen hasta 5
   // páginas (5000 eventos) para que la vista por defecto cubra semanas
-  // incluso con envíos gigantes en el medio.
+  // incluso con envíos gigantes en el medio. Las 5 páginas, el catálogo, las
+  // garantías y el sell-out se piden TODOS A LA VEZ: antes iban en fila (12
+  // viajes al servidor uno atrás de otro).
   const PAGINA = 1000, TOPE = 5000;
-  let conSo = true;
-  const filas = [];
-  for (let desde = 0; desde < TOPE; desde += PAGINA) {
+  const pagina = async (desde, conSo) => {
     let res = await build(conSo).range(desde, desde + PAGINA - 1);
     // so_number es columna nueva: si todavía no existe (SQL pendiente), se
     // reintenta la búsqueda sin ella en vez de romper la página.
     if (res.error && conSo && /so_number/i.test(res.error.message)) {
-      conSo = false;
       res = await build(false).range(desde, desde + PAGINA - 1);
     }
     if (res.error) throw new Error(res.error.message);
-    const lote = res.data ?? [];
+    return res.data ?? [];
+  };
+  const desdes = [];
+  for (let d = 0; d < TOPE; d += PAGINA) desdes.push(d);
+  const [paginas, skusRes, garantias, sellout] = await Promise.all([
+    Promise.all(desdes.map(d => pagina(d, true))),
+    excludeSkus(supabase.from('skus').select('sku, description')),
+    // Cobertura de garantía por serial. La tabla es chica (~2k filas) y se
+    // trae entera: así el badge sale igual para los seriales que vinieron por
+    // búsqueda server-side. Si todavía no existe, la página sigue sin ella.
+    paginar(() => supabase.from('warranty_serials').select('*')).catch(() => []),
+    // Sell-out del disti: reseller, end customer y fecha de venta por serial.
+    fetchSelloutMap(),
+  ]);
+  const filas = [];
+  for (const lote of paginas) {
     filas.push(...lote);
     if (lote.length < PAGINA) break;
   }
-  const skusRes = await excludeSkus(supabase.from('skus').select('sku, description'));
-
-  // Cobertura de garantía por serial. La tabla es chica (~2k filas) y se trae
-  // entera: así el badge sale igual para los seriales que vinieron por
-  // búsqueda server-side, sin una segunda consulta por cada orden. Si todavía
-  // no se corrió SQL_warranties.sql, la página sigue andando sin la columna.
-  let garantias;
-  try {
-    garantias = await paginar(() => supabase.from('warranty_serials').select('*'));
-  } catch { garantias = []; }
-  // Sell-out del disti: reseller, end customer y fecha de venta por serial.
-  // Es lo que NetSuite no tiene; se muestra marcado "per sell-out".
-  const sellout = await fetchSelloutMap();
 
   return { rows: filas, skus: skusRes.data ?? [], garantias, sellout };
 }

@@ -100,6 +100,15 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   equipo (equipo = SKU que aparece en serial_shipments), por equipo enviado;
   no aplica a resellers (el sell-out solo trae equipos).
 
+- **Velocidad (20/10/2026).** `useQuery` tiene caché en memoria: lo que se
+  cargó hace < 5 min se muestra al instante sin consultar; más viejo se
+  muestra igual y se refresca en segundo plano. `guardarSeguimiento` llama
+  `invalidarCache()`. `paginar` pide las páginas de a 5 en paralelo (la
+  primera sola). Regla: en un `fetchX` todo lo que no dependa entre sí va en
+  un `Promise.all`, nunca `await` en fila. `fetchRevenue` se memoriza 5 min
+  (lo usan Revenue y Overview). Índices de Postgres para Serial Numbers /
+  SO History en `SQL_indices_velocidad.sql` (carpeta del pipeline).
+
 ## Convenciones de código
 
 - Dark theme: fondos `#0f1923` (body) / `#0d1620` (paneles), bordes

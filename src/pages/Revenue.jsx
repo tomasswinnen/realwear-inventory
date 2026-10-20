@@ -42,19 +42,30 @@ const RE_WAR = /^(SSP|SP-ADV|WAR-STD|SUPP-STD|RMA-POOL)/i;
 const RE_SW = /DEV-PRO|ARIOS|Cloud|Analytics|License|^RWPS/i;
 const FACTURADO = new Set(['Billed', 'Closed']);
 
-export async function fetchRevenue() {
-  const lineas = await paginar(() => supabase.from('so_lines').select('so_number, sku, qty, amount')
-    .or('sku.ilike.SSP*,sku.ilike.SP-ADV*,sku.ilike.WAR-STD*,sku.ilike.SUPP-STD*,sku.ilike.RMA-POOL*,sku.ilike.DEV-PRO*,sku.ilike.ARIOS*,sku.ilike.*Cloud*,sku.ilike.*Analytics*,sku.ilike.*License*,sku.ilike.RWPS*'));
+// Se comparte con Overview: una sola bajada cada 5 minutos aunque se visiten
+// las dos páginas (el caché de useQuery es por página; este es por función).
+let _rev = { at: 0, promesa: null };
+export function fetchRevenue() {
+  if (_rev.promesa && Date.now() - _rev.at < 5 * 60 * 1000) return _rev.promesa;
+  _rev = { at: Date.now(), promesa: bajarRevenue().catch(e => { _rev = { at: 0, promesa: null }; throw e; }) };
+  return _rev.promesa;
+}
+
+async function bajarRevenue() {
+  // Las líneas de plan y las tres tablas de cobertura no dependen entre sí:
+  // se piden a la vez. Las cabeceras de SO sí dependen de las líneas.
+  const [lineas, planes, seriales, lp] = await Promise.all([
+    paginar(() => supabase.from('so_lines').select('so_number, sku, qty, amount')
+      .or('sku.ilike.SSP*,sku.ilike.SP-ADV*,sku.ilike.WAR-STD*,sku.ilike.SUPP-STD*,sku.ilike.RMA-POOL*,sku.ilike.DEV-PRO*,sku.ilike.ARIOS*,sku.ilike.*Cloud*,sku.ilike.*Analytics*,sku.ilike.*License*,sku.ilike.RWPS*')),
+    paginar(() => supabase.from('warranties').select('so_number, so_date, customer, sku, qty, plan_years, start_date, end_date, start_source, end_customer')),
+    paginar(() => supabase.from('warranty_serials').select('serial, sku, so_number, end_date')),
+    paginar(() => supabase.from('launchpad_subs').select('serial, plan_code, end_date, customer, distributor')),
+  ]);
   const sos = [...new Set(lineas.map(l => l.so_number))];
   const lotes = [];
   for (let i = 0; i < sos.length; i += 150) lotes.push(sos.slice(i, i + 150));
   const cabeceras = (await Promise.all(lotes.map(lote => paginar(() => supabase.from('so_history')
     .select('so_number, so_date, customer, status').in('so_number', lote))))).flat();
-  const [planes, seriales, lp] = await Promise.all([
-    paginar(() => supabase.from('warranties').select('so_number, so_date, customer, sku, qty, plan_years, start_date, end_date, start_source, end_customer')),
-    paginar(() => supabase.from('warranty_serials').select('serial, sku, so_number, end_date')),
-    paginar(() => supabase.from('launchpad_subs').select('serial, plan_code, end_date, customer, distributor')),
-  ]);
   return { lineas, cabeceras, planes, seriales, lp };
 }
 

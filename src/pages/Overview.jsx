@@ -21,7 +21,7 @@ async function fetchOverview() {
     const r = await supabase.from(tabla).select('*', { count: 'exact', head: true });
     return r.error ? null : r.count;
   };
-  const [ws, lp, inv, sell, subFu, warFu, nShip, runs] = await Promise.all([
+  const [ws, lp, inv, sell, subFu, warFu, nShip, runs, revenue] = await Promise.all([
     traer(() => supabase.from('warranty_serials').select('serial, end_date, end_customer, so_number, customer')),
     traer(() => supabase.from('launchpad_subs').select('serial, end_date, customer, plan_code, reseller')),
     traer(() => supabase.from('warranties').select('so_number, customer').eq('start_source', 'invoice')),
@@ -31,11 +31,10 @@ async function fetchOverview() {
     contar('serial_shipments'),
     supabase.from('pipeline_runs').select('finished_at').eq('ok', true)
       .order('finished_at', { ascending: false }).limit(1),
+    // Plata: misma lógica que la página Renewals & Revenue (no se duplica), y
+    // se pide junto con lo demás. Si falla, la sección no se muestra.
+    fetchRevenue().then(calcularRevenue).catch(() => null),
   ]);
-  // Plata: misma lógica que la página Renewals & Revenue (no se duplica).
-  // Si falla, la sección de plata no se muestra y el resto sigue.
-  let revenue = null;
-  try { revenue = calcularRevenue(await fetchRevenue()); } catch { revenue = null; }
   return {
     revenue,
     ws: ws ?? [], lp: lp ?? [], inv: inv ?? [], sell: sell ?? [],

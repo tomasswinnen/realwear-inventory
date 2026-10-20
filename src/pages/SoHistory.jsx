@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase, excludeSkus } from '../lib/supabase';
+import { supabase, excludeSkus, paginar } from '../lib/supabase';
 import { useQuery } from '../hooks/useQuery';
 import { QueryError } from '../components/QueryError';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
@@ -16,53 +16,41 @@ import { formatCurrency, isValidSku } from '../utils/coverage';
 // (shipping_costs, cargada desde facturas — fase 2; hasta que haya facturas
 // la columna muestra "—"). El puente entre ambas es el tracking number:
 // shipping_costs.tracking → so_tracking → orden.
-const PAGINA = 1000;
-
-async function paginado(armar) {
-  const filas = [];
-  for (let desde = 0; desde < 20000; desde += PAGINA) {
-    const res = await armar().range(desde, desde + PAGINA - 1);
-    if (res.error) throw new Error(res.error.message);
-    filas.push(...(res.data ?? []));
-    if ((res.data ?? []).length < PAGINA) break;
-  }
-  return filas;
-}
-
 async function fetchSoHistory() {
-  const historia = await paginado(() =>
-    supabase.from('so_history').select('*').order('so_date', { ascending: false }));
+  // Todo lo independiente se pide A LA VEZ (antes eran 40+ viajes al servidor
+  // uno atrás de otro, ~5 segundos). `paginar` además trae las páginas de
+  // cada tabla en paralelo.
+  const [historia, trackTodos, costos, skusRes, lineas, planes] = await Promise.all([
+    paginar(() => supabase.from('so_history').select('*').order('so_date', { ascending: false }), { tope: 20000 }),
+    // Tracking numbers de cada orden (tabla chica, se trae entera)
+    paginar(() => supabase.from('so_tracking').select('so_number, tracking, ship_date'), { tope: 20000 }).catch(() => []),
+    // Costos reales (fase 2). Tabla puede estar vacía o no existir todavía.
+    paginar(() => supabase.from('shipping_costs').select('*'), { tope: 20000 }).catch(() => []),
+    excludeSkus(supabase.from('skus').select('sku, description')),
+    // Warehouse de origen por orden: sale de las líneas (so_lines.location).
+    // Solo esas dos columnas; si la tabla aún no existe, se sigue sin ella.
+    paginar(() => supabase.from('so_lines').select('so_number, location').order('id', { ascending: true }), { tope: 20000 }).catch(() => []),
+    // Coberturas de service plan por orden (tabla `warranties`, del pipeline):
+    // marca qué órdenes llevaron plan y quién es el cliente FINAL.
+    paginar(() => supabase.from('warranties').select('*'), { tope: 20000 }).catch(() => []),
+  ]);
 
-  // Tracking numbers de cada orden (tabla chica, se trae entera)
-  let trackTodos = [];
-  try {
-    trackTodos = await paginado(() =>
-      supabase.from('so_tracking').select('so_number, tracking, ship_date'));
-  } catch { trackTodos = []; }
   const trackBySo = new Map();
   for (const t of trackTodos) {
     if (!trackBySo.has(t.so_number)) trackBySo.set(t.so_number, []);
     trackBySo.get(t.so_number).push(t);
   }
 
-  // Costos reales (fase 2). Tabla puede estar vacía o no existir todavía.
-  let costos = [];
-  try {
-    costos = await paginado(() => supabase.from('shipping_costs').select('*'));
-  } catch { costos = []; }
-
   // Mapear cada costo a su orden vía el tracking number
   const pagadoPorSo = new Map();
   if (costos.length) {
     const trackings = [...new Set(costos.map(c => c.tracking).filter(Boolean))];
     const mapa = new Map(); // tracking -> so_number
-    for (let i = 0; i < trackings.length; i += 100) {
-      const res = await supabase.from('so_tracking')
-        .select('so_number, tracking')
-        .in('tracking', trackings.slice(i, i + 100));
-      if (res.error) break;
-      for (const t of res.data ?? []) mapa.set(t.tracking, t.so_number);
-    }
+    const lotes = [];
+    for (let i = 0; i < trackings.length; i += 100) lotes.push(trackings.slice(i, i + 100));
+    const res = await Promise.all(lotes.map(lote =>
+      supabase.from('so_tracking').select('so_number, tracking').in('tracking', lote)));
+    for (const r of res) for (const t of r.data ?? []) mapa.set(t.tracking, t.so_number);
     for (const c of costos) {
       // Primero se intenta por tracking (NetSuite); si la factura ya trae la
       // orden directa (detalle Javelin: shipping_costs.so_number), se usa esa.
@@ -72,35 +60,20 @@ async function fetchSoHistory() {
     }
   }
 
-  const skusRes = await excludeSkus(supabase.from('skus').select('sku, description'));
   const descBySku = Object.fromEntries((skusRes.data ?? []).map(s => [s.sku, s.description]));
 
-  // Warehouse de origen por orden: sale de las líneas (so_lines.location).
-  // Se traen solo esas dos columnas; si la tabla/columna aún no existe, la
-  // página funciona sin la columna de warehouse.
   const whBySo = new Map();
-  try {
-    const lineas = await paginado(() =>
-      supabase.from('so_lines').select('so_number, location').order('id', { ascending: true }));
-    for (const l of lineas) {
-      if (!l.location) continue;
-      if (!whBySo.has(l.so_number)) whBySo.set(l.so_number, new Set());
-      whBySo.get(l.so_number).add(l.location);
-    }
-  } catch { /* sin location todavía */ }
+  for (const l of lineas) {
+    if (!l.location) continue;
+    if (!whBySo.has(l.so_number)) whBySo.set(l.so_number, new Set());
+    whBySo.get(l.so_number).add(l.location);
+  }
 
-  // Coberturas de service plan por orden (tabla `warranties`, del pipeline).
-  // Sirve para marcar en la lista qué órdenes llevaron plan y quién es el
-  // cliente FINAL, que acá no se sabe: so_history.customer es a quién se le
-  // facturó, casi siempre el distribuidor.
   const garantiasBySo = new Map();
-  try {
-    const planes = await paginado(() => supabase.from('warranties').select('*'));
-    for (const w of planes) {
-      if (!garantiasBySo.has(w.so_number)) garantiasBySo.set(w.so_number, []);
-      garantiasBySo.get(w.so_number).push(w);
-    }
-  } catch { /* sin SQL_warranties.sql todavía */ }
+  for (const w of planes) {
+    if (!garantiasBySo.has(w.so_number)) garantiasBySo.set(w.so_number, []);
+    garantiasBySo.get(w.so_number).push(w);
+  }
 
   return { historia, pagadoPorSo, trackBySo, descBySku, whBySo, garantiasBySo,
            hayCostos: costos.length > 0 };
