@@ -38,11 +38,13 @@ export const PEPSI = {
   // programa (en purchase_orders) + las de afuera (pool de repuestos y
   // unidades sueltas a $0 para Peak).
   other_sos: [
-    { so_number: 'SO20129', label: 'spare pool' },
-    { so_number: 'SO20150', label: 'spare pool' },
-    { so_number: 'SO20248', label: 'single unit, $0' },
-    { so_number: 'SO20290', label: 'single unit, $0' },
-    { so_number: 'SO20291', label: 'single unit, $0' },
+    // SO20129 NO va por Peak: facturada a PBC of Daytona Beach (planta de
+    // Pepsi), 1 unidad a $0.
+    { so_number: 'SO20129', label: 'direct to PBC of Daytona Beach (Pepsi plant), $0 — not via Peak' },
+    { so_number: 'SO20150', label: 'spare pool for Peak, 25 units, $42,930' },
+    { so_number: 'SO20248', label: 'single unit to Peak, $0' },
+    { so_number: 'SO20290', label: 'single unit to Peak, $0' },
+    { so_number: 'SO20291', label: 'single unit to Peak, $0' },
   ],
   purchase_orders: [
     {
@@ -69,7 +71,7 @@ export const PEPSI = {
       qty_per_kit: 1, qty_required: 1537,
       qty_by_po: { POINC110038312: 855, POINC110039090: 682 },
       qty_ordered_total: 1537, qty_shipped: 855, status: 'confirmed',
-      note: 'Shipment 1 (SO-PEPSICO-BO, 8/28, FedEx 876425239864 = IF20405): 455 · Shipment 3 (SO-PEPSICO-BO2, 9/15, FedEx 383718639399 = IF20456/60): 400 — Q4 PO fully shipped & billed. Outside these POs: 26 spare-pool units (SO20129: 1, SO20150: 25)',
+      note: 'Shipment 1 (SO-PEPSICO-BO, 8/28, FedEx 876425239864 = IF20405): 455 · Shipment 3 (SO-PEPSICO-BO2, 9/15, FedEx 383718639399 = IF20456/60): 400 — Q4 PO fully shipped & billed. Outside these POs: 25 spare-pool units to Peak (SO20150, $42,930), 3 single units to Peak at $0 (SO20248/20290/20291) and 1 unit shipped direct to PBC of Daytona Beach, a Pepsi plant (SO20129, $0, not via Peak)',
     },
     {
       sku: '127108', name: 'Battery Pack Navigator 500 Series',
