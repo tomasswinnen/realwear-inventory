@@ -1,5 +1,7 @@
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, paginar } from '../lib/supabase';
+import { descargarCSV } from '../components/FollowUp';
 import { useQuery } from '../hooks/useQuery';
 import { KPICard } from '../components/KPICard';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
@@ -16,9 +18,13 @@ const SKUS_PEPSI = PEPSI.items.map(i => i.sku);
 // SOs de NetSuite ligadas a las POs de Peak (ej: SO20159): de ahi sale el
 // shipped/open en vivo, sin tener que actualizar qty_shipped a mano.
 const SOS_PEPSI = PEPSI.purchase_orders.map(p => p.so_number).filter(Boolean);
+// SOs de afuera del programa (pool de repuestos, unidades sueltas) para la
+// lista de seriales.
+const SOS_OTRAS = (PEPSI.other_sos ?? []).map(o => o.so_number);
+const LABEL_SO = Object.fromEntries((PEPSI.other_sos ?? []).map(o => [o.so_number, o.label]));
 
 async function fetchStockPepsi() {
-  const [snapRes, posRes, soRes] = await Promise.all([
+  const [snapRes, posRes, soRes, seriales] = await Promise.all([
     supabase.from('inventory_snapshot')
       .select('sku, on_hand_portland, on_hand_hk, updated_at')
       .in('sku', SKUS_PEPSI).order('updated_at', { ascending: false }),
@@ -28,6 +34,13 @@ async function fetchStockPepsi() {
     supabase.from('sales_backlog')
       .select('so_number, sku, qty_ordered, qty_open')
       .in('so_number', SOS_PEPSI.length ? SOS_PEPSI : ['__nada__']),
+    // Seriales que salieron (fulfillments) en las SOs del programa y las de
+    // afuera. Vienen de serial_shipments, así que se actualizan solos.
+    paginar(() => supabase.from('serial_shipments')
+      .select('serial, sku, doc_number, fecha, so_number')
+      .in('so_number', [...SOS_PEPSI, ...SOS_OTRAS])
+      .eq('doc_type', 'ItemShip')
+      .order('fecha', { ascending: true })).catch(() => []),
   ]);
   const stock = {};
   for (const s of snapRes.data ?? []) {
@@ -47,7 +60,92 @@ async function fetchStockPepsi() {
     enviadoVivo[l.sku] = (enviadoVivo[l.sku] ?? 0) + Math.max(0, hecho);
     abiertoVivo[l.sku] = (abiertoVivo[l.sku] ?? 0) + (l.qty_open ?? 0);
   }
-  return { stock, entrando, enviadoVivo, abiertoVivo, hayDatos: !snapRes.error };
+  return { stock, entrando, enviadoVivo, abiertoVivo, seriales, hayDatos: !snapRes.error };
+}
+
+// Seriales enviados, agrupados por fulfillment (una fila por envío).
+function SerialesEnviados({ seriales }) {
+  const [q, setQ] = useState('');
+  const [abierto, setAbierto] = useState(null);
+  const envios = useMemo(() => {
+    const por = new Map();
+    for (const e of seriales) {
+      const k = `${e.so_number}|${e.doc_number}`;
+      if (!por.has(k)) por.set(k, { k, so: e.so_number, doc: e.doc_number, fecha: e.fecha, seriales: [] });
+      por.get(k).seriales.push(e.serial);
+    }
+    for (const v of por.values()) v.seriales.sort();
+    return [...por.values()].sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+  }, [seriales]);
+  const t = q.trim().toUpperCase();
+  const hits = t ? seriales.filter(e => e.serial.toUpperCase().includes(t)) : null;
+  const programa = seriales.filter(e => SOS_PEPSI.includes(e.so_number)).length;
+  const exportar = () => descargarCSV(seriales.map(e => ({
+    Serial: e.serial, SKU: e.sku, 'Sales order': e.so_number,
+    'Outside program': LABEL_SO[e.so_number] ?? '', Fulfillment: e.doc_number, 'Ship date': e.fecha,
+  })), `pepsi_serials_${new Date().toISOString().slice(0, 10)}.csv`);
+  const copiar = lista => navigator.clipboard?.writeText(lista.join('\n'));
+
+  return (
+    <section className="space-y-2">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <h2 className="text-sm font-sans font-semibold text-white">
+          Serial numbers shipped
+          <span className="text-muted font-normal"> · {programa.toLocaleString()} on the program POs{seriales.length > programa ? ` + ${(seriales.length - programa).toLocaleString()} outside` : ''}</span>
+        </h2>
+        <div className="flex items-center gap-2">
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a serial…"
+            className="w-48 bg-white/[0.03] border border-white/[0.1] rounded px-2.5 py-1 text-xs font-mono text-white placeholder:text-muted focus:outline-none focus:border-accent/50" />
+          <button onClick={exportar} disabled={!seriales.length}
+            className="px-2.5 py-1 rounded bg-accent text-white text-[11px] hover:bg-accent/80 disabled:opacity-30">Export CSV</button>
+        </div>
+      </div>
+
+      {!seriales.length && <p className="text-[11px] font-mono text-muted">No fulfillments found in NetSuite for these orders yet.</p>}
+
+      {hits && (
+        <div className="bg-card rounded-lg border border-white/[0.08] p-3">
+          {hits.length ? hits.slice(0, 50).map(e => (
+            <p key={`${e.serial}-${e.doc_number}`} className="text-[11px] font-mono text-slate-300">
+              <Link to={`/serials?q=${encodeURIComponent(e.serial)}`} className="text-accent hover:underline">{e.serial}</Link>
+              <span className="text-muted"> · {e.so_number}{LABEL_SO[e.so_number] ? ` (${LABEL_SO[e.so_number]})` : ''} · {e.doc_number} · {e.fecha}</span>
+            </p>
+          )) : <p className="text-[11px] font-mono text-muted">No Pepsi serial matches "{q.trim()}".</p>}
+          {hits.length > 50 && <p className="text-[10px] font-mono text-muted mt-1">showing 50 of {hits.length}</p>}
+        </div>
+      )}
+
+      {!hits && envios.length > 0 && (
+        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+          {envios.map(v => {
+            const open = abierto === v.k;
+            return (
+              <div key={v.k} className="border-b border-white/[0.04] last:border-0">
+                <button onClick={() => setAbierto(open ? null : v.k)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.02]">
+                  <span className={`text-muted text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+                  <span className="font-mono text-white text-sm w-14">{v.seriales.length.toLocaleString()}</span>
+                  <span className="font-mono text-[11px] text-slate-300">{v.fecha} · {v.doc} · {v.so}</span>
+                  {LABEL_SO[v.so] && <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-muted">{LABEL_SO[v.so]}</span>}
+                  {!LABEL_SO[v.so] && <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent">program</span>}
+                </button>
+                {open && (
+                  <div className="px-4 pb-3">
+                    <div className="flex justify-end mb-1.5">
+                      <button onClick={() => copiar(v.seriales)} className="text-[10px] font-mono text-accent hover:underline">Copy {v.seriales.length} serials</button>
+                    </div>
+                    <div className="grid gap-x-4 gap-y-0.5 font-mono text-[11px] text-slate-300" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
+                      {v.seriales.map(sn => <Link key={sn} to={`/serials?q=${encodeURIComponent(sn)}`} className="hover:text-accent truncate">{sn}</Link>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
 }
 
 // Etiqueta corta de entrega por PO: "Q4 2026" / "Nov 2026 (no antes de 11-01)"
@@ -337,6 +435,9 @@ export function Pepsi() {
           </>
         )}
       </section>
+
+      {/* Seriales que salieron (NetSuite) */}
+      {!loading && <SerialesEnviados seriales={data?.seriales ?? []} />}
 
       {/* Notas de la orden (lo fino: workband, clips, cargador 65W) */}
       <section className="space-y-1.5">

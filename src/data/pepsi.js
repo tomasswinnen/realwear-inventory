@@ -34,6 +34,16 @@ export const PEPSI = {
   },
   // Mail de Timon (9/3) con los PDFs de las dos POs finales de hardware
   po_email: 'https://outlook.office365.com/owa/?ItemID=AAMkADEwZGQxZDU1LWY3YzUtNGZlZC1hZmE2LTg2MGRjYWU1OWRiNwBGAAAAAAATk%2F8Xj0YLTIdroYUHAFJ2BwAzCI4YJJD%2BTKdnqF547uDVAAAAAAEMAAAzCI4YJJD%2BTKdnqF547uDVAAGq%2BXqAAAA%3D&exvsurl=1&viewmodel=ReadMessageItem',
+  // SOs cuyos seriales se listan en "Serial numbers shipped": las del
+  // programa (en purchase_orders) + las de afuera (pool de repuestos y
+  // unidades sueltas a $0 para Peak).
+  other_sos: [
+    { so_number: 'SO20129', label: 'spare pool' },
+    { so_number: 'SO20150', label: 'spare pool' },
+    { so_number: 'SO20248', label: 'single unit, $0' },
+    { so_number: 'SO20290', label: 'single unit, $0' },
+    { so_number: 'SO20291', label: 'single unit, $0' },
+  ],
   purchase_orders: [
     {
       po_number: 'POINC110038312', date: '2026-08-05', kits: 855, tranche: 'Q4 2026',
