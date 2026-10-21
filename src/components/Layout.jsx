@@ -31,7 +31,7 @@ const NAV_SECTIONS = [
     { to: '/backlog',     label: 'Open Sales Orders', icon: 'receipt' },
     { to: '/so-history',  label: 'SO History',      icon: 'archive' },
     { to: '/pepsi',       label: 'PepsiCo',         icon: 'flag' },
-    { to: '/sales-pipeline', label: 'Sales Pipeline', icon: 'dollar' },
+    { to: '/sales-pipeline', label: 'Pipeline & Forecast', icon: 'dollar' },
     { to: '/margins',     label: 'Margins',         icon: 'percent' },
     { to: '/distributor-stock', label: 'Distributor Stock', icon: 'store' },
     { to: '/distributor-scorecard', label: 'Distributor Scorecard', icon: 'calc' },

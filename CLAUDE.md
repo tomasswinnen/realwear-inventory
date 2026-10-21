@@ -35,7 +35,10 @@ ventana de ~90 días), `shipping_costs`, `freight_invoices`, `monthly_sales`,
 distribuidores al 10/2026), `warranties` y `warranty_serials` (coberturas de
 service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
 `sellout_devices` (sell-out de los distribuidores, con `ns_match`/`ns_serial`
-= cruce contra NetSuite que calcula el pipeline).
+= cruce contra NetSuite que calcula el pipeline), `sales_pipeline` (deals de
+HubSpot con line items, probabilidad de etapa y distribuidor/reseller por
+asociación; la carga `subir_hubspot.py` del pipeline en cada corrida —
+`import_sales_pipeline.py` de este repo quedó obsoleto).
 
 ## Reglas de negocio (no romper)
 
@@ -119,7 +122,8 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
   dimensionar con `h-* w-auto`.
 - Páginas en `src/pages/` (una ruta cada una, lazy en `App.jsx`): Dashboard,
   Forecast, Locations, ItemForecast (`/item/:sku`), POHistory, ReorderAlerts,
-  TransferOrders, OnOrder, DistributorStock, SalesPipeline,
+  TransferOrders, OnOrder, DistributorStock, SalesPipeline (`/sales-pipeline`,
+  "Pipeline & Forecast"),
   DistributorScorecard, Backlog (`/backlog?so=`), LeadTimes, Margins, Trends,
   Serials (`/serials?q=`), Warranties, SoHistory, Pepsi, Payments, Login,
   UpdatePassword, PartnerScore (`/partner-score`).
@@ -127,8 +131,8 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
 
 ## Reglas de trabajo con Claude
 
-- **Credenciales: jamás.** `.netsuite_config.json` y `.supabase_config.json`
-  viven solo en la carpeta del pipeline y los leen los scripts; no van en chat,
+- **Credenciales: jamás.** `.netsuite_config.json`, `.supabase_config.json` y
+  `.hubspot_config.json` viven solo en la carpeta del pipeline y los leen los scripts; no van en chat,
   ni en el repo, ni en código. El frontend solo usa la anon key por env vars.
   La service_role key no se usa nunca desde el sitio.
 - **`git push` lo hace Tomas desde PowerShell.** Las sesiones de Claude no
@@ -138,6 +142,19 @@ service plan; ver regla abajo), `launchpad_subs` (registros de Launchpad),
 - Al terminar un cambio relevante: actualizar este CLAUDE.md.
 
 ## Historia reciente (resumen de contexto)
+
+- 21/10/2026: **Pipeline & Forecast** (`/sales-pipeline`): los deals abiertos
+  de HubSpot pasados a unidades por SKU por mes (line items × probabilidad de
+  la etapa, por mes de close date) y cruzados con available, POs abiertas y
+  run-rate (`demand_forecast.avg_6m`) → mes en que se acaba el stock, fecha
+  para pedir (stock-out − lead time, 60 d si el SKU no tiene) y cantidad
+  sugerida (lead time + 3 meses, redondeado a MOQ). Lógica pura en
+  `src/utils/forecast.js` (mapeo de `hs_sku` al catálogo: `127033S*`→`127033*`,
+  `ROI520`/`127128 ROI10` = kits, `127160`→`127165*`, servicios ignorados).
+  Deals sin close date o sin line items NO entran en las unidades (panel
+  "Data quality"). Los deals destildados en "Biggest deals" se guardan en
+  localStorage. Vencidos cuentan como el mes actual. `sales_pipeline` la
+  carga `subir_hubspot.py` (pipeline) con Service Key de HubSpot, lectura sola.
 
 - 16/10/2026: página Sell-out (`/sell-out`, tabla `sellout_devices`): lo que
   los distribuidores reportan haber vendido, serial por serial, con reseller y
