@@ -7,6 +7,7 @@ import { KPICard } from '../components/KPICard';
 import { TableSkeleton, KPISkeleton } from '../components/Skeleton';
 import { formatCurrency } from '../utils/coverage';
 import { PEPSI } from '../data/pepsi';
+import { nombreCuenta } from '../utils/warranty';
 
 // Programa PepsiCo, vista OPERATIVA: por cada item del kit, cuanto pidio
 // Pepsi (y para cuando), cuanto ya se despacho, y contra eso el stock real
@@ -22,6 +23,8 @@ const SOS_PEPSI = PEPSI.purchase_orders.map(p => p.so_number).filter(Boolean);
 // lista de seriales.
 const SOS_OTRAS = (PEPSI.other_sos ?? []).map(o => o.so_number);
 const LABEL_SO = Object.fromEntries((PEPSI.other_sos ?? []).map(o => [o.so_number, o.label]));
+// Cuentas de NetSuite que son Pepsi (match parcial, sin mayúsculas)
+const CLIENTES_PEPSI = ['pepsi', 'peak technologies', 'pbc of daytona', 'frito lay'];
 
 async function fetchStockPepsi() {
   const [snapRes, posRes, soRes, seriales] = await Promise.all([
@@ -34,11 +37,14 @@ async function fetchStockPepsi() {
     supabase.from('sales_backlog')
       .select('so_number, sku, qty_ordered, qty_open')
       .in('so_number', SOS_PEPSI.length ? SOS_PEPSI : ['__nada__']),
-    // Seriales que salieron (fulfillments) en las SOs del programa y las de
-    // afuera. Vienen de serial_shipments, así que se actualizan solos.
+    // TODOS los seriales que salieron (fulfillments) a Pepsi, desde siempre:
+    // facturados a PepsiCo / Pepsi Beverages / Pepsi Cola / Frito Lay /
+    // PBC of Daytona Beach (plantas) o a Peak Technologies (el integrador
+    // de Pepsi; en NetSuite todo lo de Peak es Pepsi). Vienen de
+    // serial_shipments, así que se actualizan solos.
     paginar(() => supabase.from('serial_shipments')
-      .select('serial, sku, doc_number, fecha, so_number')
-      .in('so_number', [...SOS_PEPSI, ...SOS_OTRAS])
+      .select('serial, sku, doc_number, fecha, so_number, cliente')
+      .or(CLIENTES_PEPSI.map(c => `cliente.ilike.*${c}*`).join(','))
       .eq('doc_type', 'ItemShip')
       .order('fecha', { ascending: true })).catch(() => []),
   ]);
@@ -63,35 +69,50 @@ async function fetchStockPepsi() {
   return { stock, entrando, enviadoVivo, abiertoVivo, seriales, hayDatos: !snapRes.error };
 }
 
-// Seriales enviados, agrupados por fulfillment (una fila por envío).
+// Seriales enviados a Pepsi, desde siempre: por año y, adentro, por
+// fulfillment (una fila por envío). El año en curso arranca abierto.
 function SerialesEnviados({ seriales }) {
   const [q, setQ] = useState('');
   const [abierto, setAbierto] = useState(null);
-  const envios = useMemo(() => {
+  const anioHoy = new Date().toISOString().slice(0, 4);
+  const [anios, setAnios] = useState(() => new Set([anioHoy]));
+  const porAnio = useMemo(() => {
     const por = new Map();
     for (const e of seriales) {
       const k = `${e.so_number}|${e.doc_number}`;
-      if (!por.has(k)) por.set(k, { k, so: e.so_number, doc: e.doc_number, fecha: e.fecha, seriales: [] });
+      if (!por.has(k)) por.set(k, { k, so: e.so_number, doc: e.doc_number, fecha: e.fecha, cliente: nombreCuenta(e.cliente), seriales: [] });
       por.get(k).seriales.push(e.serial);
     }
-    for (const v of por.values()) v.seriales.sort();
-    return [...por.values()].sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+    const envios = [...por.values()].sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+    for (const v of envios) v.seriales.sort();
+    const anios = new Map();
+    for (const v of envios) {
+      const y = (v.fecha ?? '').slice(0, 4) || '?';
+      if (!anios.has(y)) anios.set(y, { y, envios: [], total: 0, programa: 0 });
+      const a = anios.get(y);
+      a.envios.push(v); a.total += v.seriales.length;
+      if (SOS_PEPSI.includes(v.so)) a.programa += v.seriales.length;
+    }
+    return [...anios.values()].sort((a, b) => (a.y < b.y ? 1 : -1));
   }, [seriales]);
   const t = q.trim().toUpperCase();
   const hits = t ? seriales.filter(e => e.serial.toUpperCase().includes(t)) : null;
   const programa = seriales.filter(e => SOS_PEPSI.includes(e.so_number)).length;
-  const exportar = () => descargarCSV(seriales.map(e => ({
-    Serial: e.serial, SKU: e.sku, 'Sales order': e.so_number,
-    'Outside program': LABEL_SO[e.so_number] ?? '', Fulfillment: e.doc_number, 'Ship date': e.fecha,
-  })), `pepsi_serials_${new Date().toISOString().slice(0, 10)}.csv`);
+  const etiqueta = so => LABEL_SO[so] ?? (SOS_PEPSI.includes(so) ? 'program' : null);
+  const exportar = () => descargarCSV([...seriales].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).map(e => ({
+    Serial: e.serial, SKU: e.sku, Year: (e.fecha ?? '').slice(0, 4), 'Ship date': e.fecha,
+    'Billed to': nombreCuenta(e.cliente), 'Sales order': e.so_number, Fulfillment: e.doc_number,
+    Program: SOS_PEPSI.includes(e.so_number) ? 'WES deployment (Peak POs)' : (LABEL_SO[e.so_number] ?? ''),
+  })), `pepsi_serials_all_${new Date().toISOString().slice(0, 10)}.csv`);
   const copiar = lista => navigator.clipboard?.writeText(lista.join('\n'));
+  const toggleAnio = y => setAnios(prev => { const n = new Set(prev); n.has(y) ? n.delete(y) : n.add(y); return n; });
 
   return (
     <section className="space-y-2">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
         <h2 className="text-sm font-sans font-semibold text-white">
-          Serial numbers shipped
-          <span className="text-muted font-normal"> · {programa.toLocaleString()} on the program POs{seriales.length > programa ? ` + ${(seriales.length - programa).toLocaleString()} outside` : ''}</span>
+          Serial numbers shipped to Pepsi
+          <span className="text-muted font-normal"> · {seriales.length.toLocaleString()} devices all time · {programa.toLocaleString()} on the current program POs</span>
         </h2>
         <div className="flex items-center gap-2">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a serial…"
@@ -100,57 +121,65 @@ function SerialesEnviados({ seriales }) {
             className="px-2.5 py-1 rounded bg-accent text-white text-[11px] hover:bg-accent/80 disabled:opacity-30">Export CSV</button>
         </div>
       </div>
+      <p className="text-[10px] font-mono text-muted">
+        Fulfillments in NetSuite billed to PepsiCo, Pepsi plants (PBC of Daytona Beach…) or Peak Technologies, Pepsi's integrator. One row per shipment; click to see the serials.
+      </p>
 
-      {!seriales.length && <p className="text-[11px] font-mono text-muted">No fulfillments found in NetSuite for these orders yet.</p>}
+      {!seriales.length && <p className="text-[11px] font-mono text-muted">No fulfillments found in NetSuite yet.</p>}
 
       {hits && (
         <div className="bg-card rounded-lg border border-white/[0.08] p-3">
           {hits.length ? hits.slice(0, 50).map(e => (
             <p key={`${e.serial}-${e.doc_number}`} className="text-[11px] font-mono text-slate-300">
               <Link to={`/serials?q=${encodeURIComponent(e.serial)}`} className="text-accent hover:underline">{e.serial}</Link>
-              <span className="text-muted"> · {e.so_number}{LABEL_SO[e.so_number] ? ` (${LABEL_SO[e.so_number]})` : ''} · {e.doc_number} · {e.fecha}</span>
+              <span className="text-muted"> · {e.fecha} · {nombreCuenta(e.cliente)} · {e.so_number}{etiqueta(e.so_number) ? ` (${etiqueta(e.so_number)})` : ''} · {e.doc_number}</span>
             </p>
           )) : <p className="text-[11px] font-mono text-muted">No Pepsi serial matches "{q.trim()}".</p>}
           {hits.length > 50 && <p className="text-[10px] font-mono text-muted mt-1">showing 50 of {hits.length}</p>}
         </div>
       )}
 
-      {!hits && envios.length > 0 && (
-        <div className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
-          {envios.map(v => {
-            const open = abierto === v.k;
-            return (
-              <div key={v.k} className="border-b border-white/[0.04] last:border-0">
-                <button onClick={() => setAbierto(open ? null : v.k)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.02]">
-                  <span className={`text-muted text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
-                  <span className="font-mono text-white text-sm w-14">{v.seriales.length.toLocaleString()}</span>
-                  <span className="font-mono text-[11px] text-slate-300">{v.fecha} · {v.doc} · {v.so}</span>
-                  {LABEL_SO[v.so] && <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-muted">{LABEL_SO[v.so]}</span>}
-                  {!LABEL_SO[v.so] && <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent">program</span>}
-                </button>
-                {open && (
-                  <div className="px-4 pb-3">
-                    <div className="flex justify-end mb-1.5">
-                      <button onClick={() => copiar(v.seriales)} className="text-[10px] font-mono text-accent hover:underline">Copy {v.seriales.length} serials</button>
+      {!hits && porAnio.map(a => {
+        const abiertoAnio = anios.has(a.y);
+        return (
+          <div key={a.y} className="bg-card rounded-lg border border-white/[0.08] overflow-hidden">
+            <button onClick={() => toggleAnio(a.y)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.02] border-b border-white/[0.06]">
+              <span className={`text-muted text-[10px] transition-transform ${abiertoAnio ? 'rotate-90' : ''}`}>▶</span>
+              <span className="font-sans font-semibold text-white text-base w-14">{a.y}</span>
+              <span className="font-mono text-white text-sm">{a.total.toLocaleString()} devices</span>
+              <span className="font-mono text-[11px] text-muted">· {a.envios.length} shipment{a.envios.length === 1 ? '' : 's'}{a.programa ? ` · ${a.programa.toLocaleString()} on the current program` : ''}</span>
+            </button>
+            {abiertoAnio && a.envios.map(v => {
+              const open = abierto === v.k;
+              const tag = etiqueta(v.so);
+              return (
+                <div key={v.k} className="border-b border-white/[0.04] last:border-0">
+                  <button onClick={() => setAbierto(open ? null : v.k)}
+                    className="w-full flex items-center gap-3 px-4 pl-8 py-2 text-left hover:bg-white/[0.02]">
+                    <span className={`text-muted text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+                    <span className="font-mono text-white text-sm w-12">{v.seriales.length.toLocaleString()}</span>
+                    <span className="font-mono text-[11px] text-slate-300">{v.fecha} · {v.doc} · {v.so}</span>
+                    <span className="font-mono text-[11px] text-muted truncate">{v.cliente}</span>
+                    {tag && <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap ${tag === 'program' ? 'bg-accent/10 text-accent' : 'bg-white/[0.06] text-muted'}`}>{tag}</span>}
+                  </button>
+                  {open && (
+                    <div className="px-4 pl-8 pb-3">
+                      <div className="flex justify-end mb-1.5">
+                        <button onClick={() => copiar(v.seriales)} className="text-[10px] font-mono text-accent hover:underline">Copy {v.seriales.length} serials</button>
+                      </div>
+                      <div className="grid gap-x-4 gap-y-0.5 font-mono text-[11px] text-slate-300" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
+                        {v.seriales.map(sn => <Link key={sn} to={`/serials?q=${encodeURIComponent(sn)}`} className="hover:text-accent truncate">{sn}</Link>)}
+                      </div>
                     </div>
-                    <div className="grid gap-x-4 gap-y-0.5 font-mono text-[11px] text-slate-300" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
-                      {v.seriales.map(sn => <Link key={sn} to={`/serials?q=${encodeURIComponent(sn)}`} className="hover:text-accent truncate">{sn}</Link>)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
     </section>
   );
-}
-
-// Etiqueta corta de entrega por PO: "Q4 2026" / "Nov 2026 (no antes de 11-01)"
-function entregaPo(po) {
-  return po.ship_not_before ? `${po.tranche} · not before ${po.ship_not_before}` : po.tranche;
 }
 
 function num(v) { return v != null ? v.toLocaleString() : '—'; }
